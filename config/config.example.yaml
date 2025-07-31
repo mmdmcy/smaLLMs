@@ -1,0 +1,68 @@
+# smaLLMs Configuration
+# Copy this file to config.yaml and update with your settings
+
+# Hugging Face Settings
+huggingface:
+  token: "YOUR_HF_TOKEN_HERE"  # Get from https://huggingface.co/settings/tokens
+  use_pro_features: true  # Set to true if you have HF Pro subscription
+  inference_endpoints:
+    timeout: 120  # seconds
+    max_retries: 3
+    batch_size: 10
+
+# Evaluation Settings
+evaluation:
+  default_samples: 100  # Number of samples to test per benchmark (reduce for faster testing)
+  max_concurrent_requests: 5  # Limit concurrent API calls to avoid rate limits
+  result_cache_days: 7  # How long to cache results locally
+  
+  # Benchmark configurations
+  benchmarks:
+    mmlu:
+      subjects: ["all"]  # or specify specific subjects to save time
+      few_shot: 5
+    gsm8k:
+      few_shot: 5
+    math:
+      few_shot: 4
+    humaneval:
+      temperature: 0.1
+      max_tokens: 512
+    
+# Storage Settings
+storage:
+  local_cache_mb: 500  # Maximum local cache size in MB
+  results_format: "json"  # json or csv
+  cleanup_old_results: true
+  
+  # Cloud storage (optional)
+  huggingface_datasets:
+    upload_results: true
+    dataset_name: "your-username/smaLLMs-results"
+
+# Web Interface
+web:
+  host: "127.0.0.1"
+  port: 7860
+  share: false  # Set to true to create public Gradio link
+  
+# API Settings
+api:
+  host: "127.0.0.1"
+  port: 8000
+  cors_origins: ["http://localhost:7860"]
+
+# Model Categories (for organization)
+model_categories:
+  tiny: "< 1B parameters"
+  small: "1B - 3B parameters"
+  medium: "3B - 7B parameters"
+  large: "7B - 13B parameters"
+  xlarge: "13B - 20B parameters"
+
+# Advanced Settings
+advanced:
+  contamination_detection: true
+  safety_evaluation: true
+  cost_tracking: true
+  performance_monitoring: true
