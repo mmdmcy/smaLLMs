@@ -3,7 +3,7 @@
 
 # Hugging Face Settings
 huggingface:
-  token: "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"  # Get from https://huggingface.co/settings/tokens
+  token: "YOUR_HF_TOKEN_HERE"  # Get from https://huggingface.co/settings/tokens
   use_pro_features: true  # Set to true if you have HF Pro subscription
   inference_endpoints:
     timeout: 120  # seconds
