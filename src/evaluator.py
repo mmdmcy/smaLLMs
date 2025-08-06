@@ -26,7 +26,7 @@ class EvaluationConfig:
     few_shot: int = 5
     temperature: float = 0.0
     max_tokens: int = 512
-    timeout: int = 120
+    timeout: int = 600  # Increased to 10 minutes for slow local models
 
 @dataclass
 class EvaluationResult:
@@ -57,6 +57,9 @@ class EvaluationOrchestrator:
         self.benchmark_registry = BenchmarkRegistry(self.config)
         self.result_aggregator = ResultAggregator(self.config)
         self.storage = ResultStorage(self.config)
+        
+        # Session management for organized results
+        self.session_id = None
         
         # Rate limiting
         self.semaphore = asyncio.Semaphore(
@@ -114,8 +117,8 @@ class EvaluationOrchestrator:
                     detailed_results=results[:5]  # Store only first 5 for space efficiency
                 )
                 
-                # Save result
-                await self.storage.save_result(result)
+                # Save result with session
+                await self.storage.save_result(result, session_id=self.session_id)
                 
                 self.logger.info(f"Completed: {config.model_name} on {config.benchmark_name} - Accuracy: {accuracy:.3f}")
                 return result
@@ -132,25 +135,80 @@ class EvaluationOrchestrator:
                     num_samples=0,
                     error=str(e)
                 )
+            finally:
+                # Cleanup model sessions after each evaluation
+                await self.model_manager.cleanup()
+    
+    async def cleanup(self):
+        """Cleanup all resources."""
+        await self.model_manager.cleanup()
     
     async def evaluate_batch(self, configs: List[EvaluationConfig]) -> List[EvaluationResult]:
-        """Run multiple evaluations in parallel."""
-        self.logger.info(f"Starting batch evaluation with {len(configs)} configurations")
+        """Run multiple evaluations SEQUENTIALLY for slow laptop compatibility."""
+        self.logger.info(f"Starting batch evaluation with {len(configs)} configurations (SEQUENTIAL for slow hardware)")
         
-        # Run evaluations concurrently
-        tasks = [self.evaluate_single(config) for config in configs]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Create session for this batch
+        self.session_id = self.storage.create_session()
+        self.logger.info(f"Created evaluation session: {self.session_id}")
         
-        # Filter out exceptions
-        valid_results = [r for r in results if isinstance(r, EvaluationResult)]
-        
-        self.logger.info(f"Completed batch evaluation: {len(valid_results)}/{len(configs)} successful")
-        return valid_results
+        try:
+            # Run evaluations SEQUENTIALLY for slow laptops - one at a time
+            results = []
+            batch_delay = self.config.get('evaluation', {}).get('batch_delay', 5.0)  # Delay between evaluations
+            
+            for i, config in enumerate(configs):
+                self.logger.info(f"Processing evaluation {i+1}/{len(configs)}: {config.model_name} on {config.benchmark_name}")
+                
+                try:
+                    result = await self.evaluate_single(config)
+                    results.append(result)
+                    
+                    # Progress update every few evaluations
+                    if (i + 1) % 5 == 0:
+                        success_count = sum(1 for r in results if not r.error)
+                        self.logger.info(f"Progress: {i+1}/{len(configs)} completed, {success_count} successful")
+                    
+                    # Resource-friendly delay between evaluations (except after the last one)
+                    if i < len(configs) - 1:
+                        self.logger.debug(f"Waiting {batch_delay}s before next evaluation...")
+                        await asyncio.sleep(batch_delay)
+                        
+                except Exception as e:
+                    self.logger.error(f"Error in evaluation {i+1}: {e}")
+                    # Create error result
+                    error_result = EvaluationResult(
+                        model_name=config.model_name,
+                        benchmark_name=config.benchmark_name,
+                        accuracy=0.0,
+                        latency=0.0,
+                        cost_estimate=0.0,
+                        timestamp=time.strftime('%Y-%m-%d %H:%M:%S'),
+                        num_samples=0,
+                        error=str(e)
+                    )
+                    results.append(error_result)
+                    
+                    # Extra delay after errors to let slow system recover
+                    await asyncio.sleep(batch_delay * 2)
+            
+            # Filter out exceptions and count successes
+            valid_results = [r for r in results if isinstance(r, EvaluationResult)]
+            success_count = sum(1 for r in valid_results if not r.error)
+            
+            self.logger.info(f"Completed SEQUENTIAL batch evaluation: {success_count}/{len(configs)} successful, {len(valid_results)} total results")
+            return valid_results
+        finally:
+            # Final cleanup after batch
+            await self.model_manager.cleanup()
     
     async def evaluate_model_comprehensive(self, model_name: str, benchmarks: List[str] = None) -> List[EvaluationResult]:
         """Run comprehensive evaluation of a model across multiple benchmarks."""
         if benchmarks is None:
             benchmarks = ["mmlu", "gsm8k", "math", "humaneval"]
+        
+        # Create session for this comprehensive evaluation
+        self.session_id = self.storage.create_session()
+        self.logger.info(f"Created comprehensive evaluation session: {self.session_id}")
         
         configs = []
         for benchmark in benchmarks:
@@ -167,6 +225,10 @@ class EvaluationOrchestrator:
         """Update leaderboard with latest results for specified models."""
         if benchmarks is None:
             benchmarks = ["mmlu", "gsm8k", "math", "humaneval"]
+        
+        # Create session for this leaderboard update
+        self.session_id = self.storage.create_session()
+        self.logger.info(f"Created leaderboard update session: {self.session_id}")
         
         all_configs = []
         for model in models:
@@ -200,6 +262,8 @@ class EvaluationOrchestrator:
 async def quick_eval(model_name: str, benchmark: str = "gsm8k", samples: int = 50) -> EvaluationResult:
     """Quick evaluation for testing purposes."""
     orchestrator = EvaluationOrchestrator()
+    # Create session for quick eval
+    orchestrator.session_id = orchestrator.storage.create_session()
     config = EvaluationConfig(
         model_name=model_name,
         benchmark_name=benchmark,
@@ -210,6 +274,8 @@ async def quick_eval(model_name: str, benchmark: str = "gsm8k", samples: int = 5
 async def compare_models(models: List[str], benchmark: str = "gsm8k", samples: int = 100) -> List[EvaluationResult]:
     """Compare multiple models on a single benchmark."""
     orchestrator = EvaluationOrchestrator()
+    # Create session for model comparison
+    orchestrator.session_id = orchestrator.storage.create_session()
     configs = [
         EvaluationConfig(model_name=model, benchmark_name=benchmark, num_samples=samples)
         for model in models

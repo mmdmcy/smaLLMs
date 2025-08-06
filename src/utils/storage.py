@@ -5,6 +5,7 @@ Handles local caching and cloud storage with minimal space usage.
 
 import json
 import os
+import asyncio
 import shutil
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -25,6 +26,23 @@ class ResultStorage:
         self.local_cache_mb = storage_config.get('local_cache_mb', 500)
         self.results_format = storage_config.get('results_format', 'json')
         self.cleanup_old_results = storage_config.get('cleanup_old_results', True)
+        
+        # Session management - track evaluation sessions
+        self.current_session_id = None
+        self.session_start_time = None
+        
+        # Low-resource mode for older computers (automatically detected)
+        self.low_resource_mode = storage_config.get('low_resource_mode', 'auto')
+        if self.low_resource_mode == 'auto':
+            # Auto-detect if we're on a resource-constrained system
+            import psutil
+            total_memory_gb = psutil.virtual_memory().total / (1024**3)
+            self.low_resource_mode = total_memory_gb < 8  # Enable if less than 8GB RAM
+        
+        # Aggressive cleanup for low-resource systems
+        if self.low_resource_mode:
+            self.local_cache_mb = min(self.local_cache_mb, 100)  # Limit cache to 100MB
+            self.logger.info("Low-resource mode enabled - aggressive space management activated")
         
         # Paths
         self.results_dir = Path('results')
@@ -47,19 +65,68 @@ class ResultStorage:
                 self.logger.warning(f"Failed to initialize HF API: {e}")
                 self.upload_results = False
     
+    def start_evaluation_session(self, session_name: str = None) -> str:
+        """Start a new evaluation session with a unique ID."""
+        if session_name is None:
+            session_name = "evaluation"
+        
+        self.session_start_time = datetime.now()
+        timestamp = self.session_start_time.strftime('%Y%m%d_%H%M%S')
+        self.current_session_id = f"{session_name}_{timestamp}"
+        
+        self.logger.info(f"Started evaluation session: {self.current_session_id}")
+        return self.current_session_id
+    
+    def end_evaluation_session(self):
+        """End the current evaluation session."""
+        if self.current_session_id:
+            self.logger.info(f"Ended evaluation session: {self.current_session_id}")
+            self.current_session_id = None
+            self.session_start_time = None
+    
+    def create_session(self, session_name: str = None) -> str:
+        """Create a new evaluation session and return the session ID."""
+        return self.start_evaluation_session(session_name)
+    
+    def get_session_directory(self) -> Path:
+        """Get the directory for the current session."""
+        if not self.current_session_id:
+            # Auto-start a session if none exists
+            self.start_evaluation_session()
+        
+        date_folder = self.session_start_time.strftime('%Y-%m-%d')
+        session_dir = self.results_dir / "evaluation_sessions" / date_folder / self.current_session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        return session_dir
+    
     def _create_directories(self):
         """Create necessary directories."""
         for directory in [self.results_dir, self.cache_dir, self.leaderboard_dir]:
             directory.mkdir(parents=True, exist_ok=True)
     
-    async def save_result(self, result) -> str:
-        """Save evaluation result locally and optionally to cloud."""
-        # Generate filename
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"{result.model_name.replace('/', '_')}_{result.benchmark_name}_{timestamp}"
+    async def save_result(self, result, session_id: str = None) -> str:
+        """Save evaluation result with session-based organization."""
+        # Use provided session_id or current session
+        if session_id:
+            self.current_session_id = session_id
+            
+        # Get session directory - all results from same session go in same folder
+        session_dir = self.get_session_directory()
         
-        # Save locally
-        local_path = self._save_local_result(result, filename)
+        # Create timestamp for this specific result
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Clean model name for filesystem
+        clean_model_name = result.model_name.replace('/', '_').replace(':', '_')
+        
+        # Generate specific filename within the session
+        filename = f"{clean_model_name}_{result.benchmark_name}_{timestamp}.json"
+        
+        # Save locally in session directory
+        local_path = self._save_local_result_session(result, session_dir, filename)
+        
+        # Also save in cache for backward compatibility
+        cache_path = self._save_local_result_cache(result, filename)
         
         # Upload to cloud if enabled
         if self.upload_results:
@@ -74,8 +141,72 @@ class ResultStorage:
         
         return str(local_path)
     
+    def _save_local_result_session(self, result, session_dir: Path, filename: str) -> Path:
+        """Save result in session directory structure."""
+        file_path = session_dir / filename
+        result_dict = {
+            'model_name': result.model_name,
+            'benchmark_name': result.benchmark_name,
+            'accuracy': result.accuracy,
+            'latency': result.latency,
+            'cost_estimate': result.cost_estimate,
+            'timestamp': result.timestamp,
+            'num_samples': result.num_samples,
+            'detailed_results': result.detailed_results if result.detailed_results else [],  # Keep all results for debugging
+            'error': result.error,
+            'session_id': self.current_session_id  # Track which session this belongs to
+        }
+        
+        with open(file_path, 'w') as f:
+            json.dump(result_dict, f, indent=2)
+        
+        self.logger.info(f"Saved session result: {file_path}")
+        return file_path
+    
+    def _save_local_result_organized(self, result, model_dir: Path, filename: str) -> Path:
+        """Save result in organized directory structure."""
+        file_path = model_dir / filename
+        result_dict = {
+            'model_name': result.model_name,
+            'benchmark_name': result.benchmark_name,
+            'accuracy': result.accuracy,
+            'latency': result.latency,
+            'cost_estimate': result.cost_estimate,
+            'timestamp': result.timestamp,
+            'num_samples': result.num_samples,
+            'detailed_results': result.detailed_results if result.detailed_results else [],  # Keep all results for debugging
+            'error': result.error
+        }
+        
+        with open(file_path, 'w') as f:
+            json.dump(result_dict, f, indent=2)
+        
+        self.logger.info(f"Saved organized result: {file_path}")
+        return file_path
+    
+    def _save_local_result_cache(self, result, filename: str) -> Path:
+        """Save result in cache directory for backward compatibility."""
+        file_path = self.cache_dir / filename
+        result_dict = {
+            'model_name': result.model_name,
+            'benchmark_name': result.benchmark_name,
+            'accuracy': result.accuracy,
+            'latency': result.latency,
+            'cost_estimate': result.cost_estimate,
+            'timestamp': result.timestamp,
+            'num_samples': result.num_samples,
+            'detailed_results': result.detailed_results[:5] if result.detailed_results else [],  # Limit for cache
+            'error': result.error
+        }
+        
+        with open(file_path, 'w') as f:
+            json.dump(result_dict, f, indent=2)
+        
+        self.logger.info(f"Saved result cache: {file_path}")
+        return file_path
+    
     def _save_local_result(self, result, filename: str) -> Path:
-        """Save result locally in specified format."""
+        """Save result locally in specified format (legacy method)."""
         if self.results_format == 'json':
             file_path = self.cache_dir / f"{filename}.json"
             result_dict = {
@@ -330,3 +461,96 @@ class ResultStorage:
         
         self.logger.info(f"Created backup: {backup_file}")
         return backup_file
+    
+    def cleanup_temp_files(self):
+        """Aggressively clean up temporary files to free disk space."""
+        cleanup_paths = [
+            # HuggingFace cache locations
+            Path.home() / '.cache' / 'huggingface' / 'hub',
+            Path.home() / '.cache' / 'huggingface' / 'transformers',
+            # System temp directories
+            Path('/tmp') if os.name != 'nt' else Path(os.environ.get('TEMP', 'C:/Windows/Temp')),
+            # Local project temp files
+            Path.cwd() / 'temp',
+            Path.cwd() / 'tmp',
+        ]
+        
+        total_freed = 0
+        for temp_path in cleanup_paths:
+            if temp_path.exists():
+                try:
+                    freed = self._cleanup_directory_safe(temp_path)
+                    total_freed += freed
+                except Exception as e:
+                    self.logger.warning(f"Could not clean {temp_path}: {e}")
+        
+        if total_freed > 0:
+            self.logger.info(f"Cleaned up {total_freed / (1024*1024):.2f}MB of temporary files")
+        
+        return total_freed
+    
+    def _cleanup_directory_safe(self, directory: Path) -> int:
+        """Safely clean up files in a directory, avoiding system files."""
+        if not directory.exists():
+            return 0
+            
+        freed_bytes = 0
+        safe_patterns = [
+            '*.tmp', '*.temp', '*.cache', '*.log', 
+            '*temp*', '*cache*', '*.partial',
+            'pytorch_model*.bin',  # Large HuggingFace model files
+            'model*.safetensors',  # More HuggingFace model files
+        ]
+        
+        for pattern in safe_patterns:
+            for file_path in directory.rglob(pattern):
+                if file_path.is_file():
+                    try:
+                        # Only delete files older than 1 hour to avoid breaking active downloads
+                        age_hours = (datetime.now().timestamp() - file_path.stat().st_mtime) / 3600
+                        if age_hours > 1.0:
+                            size = file_path.stat().st_size
+                            file_path.unlink()
+                            freed_bytes += size
+                    except Exception as e:
+                        # Ignore files we can't delete (might be in use)
+                        pass
+        
+        return freed_bytes
+    
+    def enable_low_resource_mode(self):
+        """Enable aggressive space management for resource-constrained systems."""
+        self.low_resource_mode = True
+        self.local_cache_mb = 50  # Very small cache
+        self.logger.info("Enabled low-resource mode - will aggressively manage disk space")
+        
+        # Immediate cleanup
+        self.cleanup_temp_files()
+        asyncio.run(self.cleanup_old_results())
+    
+    async def monitor_disk_space(self):
+        """Monitor disk space and clean up when running low (for local evaluation)."""
+        if not self.low_resource_mode:
+            return
+            
+        import shutil
+        total, used, free = shutil.disk_usage(Path.cwd())
+        free_gb = free / (1024**3)
+        
+        if free_gb < 2.0:  # Less than 2GB free
+            self.logger.warning(f"Low disk space detected ({free_gb:.1f}GB free), cleaning up...")
+            
+            # Aggressive cleanup
+            self.cleanup_temp_files()
+            await self.cleanup_old_results()
+            
+            # Clear all but the most recent results
+            cache_files = sorted(self.cache_dir.glob('*.json'), key=lambda x: x.stat().st_mtime)
+            for old_file in cache_files[:-5]:  # Keep only 5 most recent
+                try:
+                    old_file.unlink()
+                    self.logger.debug(f"Deleted old cache file: {old_file}")
+                except Exception:
+                    pass
+        
+        return free_gb

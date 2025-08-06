@@ -1,0 +1,41 @@
+# Comprehensive Benchmarking Configuration
+# Optimized for slow laptops with extensive timeouts
+
+evaluation:
+  num_samples: 50  # Reduced for faster evaluation
+  batch_size: 1    # Sequential processing for slow hardware
+  max_concurrent_requests: 1
+  batch_delay: 5.0  # Longer delay between requests
+  
+  # Checkpoint settings for long runs
+  checkpoint_interval: 5
+  save_partial_results: true
+
+# Ollama settings optimized for slow laptops
+ollama:
+  base_url: "http://localhost:11434"
+  timeout: 900  # 15 minutes base timeout
+  max_retries: 5
+  batch_delay: 10.0  # 10 second delay between requests
+  
+# LM Studio settings
+lm_studio:
+  base_url: "http://localhost:1234"
+  timeout: 600
+  max_retries: 3
+
+# Benchmark suite preferences
+benchmark_suites:
+  default: "safe_suite"  # Safe for slow laptops
+  comprehensive: "comprehensive_suite"  # Full evaluation
+  quick_test: "quick_test"  # Fast verification
+  industry_standard:
+    - "anthropic_suite"
+    - "deepmind_suite" 
+    - "xai_suite"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  save_samples: true
+  detailed_errors: true

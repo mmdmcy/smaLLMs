@@ -1,20 +1,47 @@
 # smaLLMs Configuration
 # Copy this file to config.yaml and update with your settings
 
+# IMPORTANT: To add your own HuggingFace models, edit config/models.yaml instead of hardcoding them!
+# This keeps model lists separate and makes it easier to customize without touching the main code.
+
 # Hugging Face Settings
 huggingface:
   token: "YOUR_HF_TOKEN_HERE"  # Get from https://huggingface.co/settings/tokens
   use_pro_features: true  # Set to true if you have HF Pro subscription
-  inference_endpoints:
-    timeout: 120  # seconds
-    max_retries: 3
-    batch_size: 10
+
+# Local Model Settings
+ollama:
+  base_url: "http://localhost:11434"  # Default Ollama server
+  auto_discovery: true  # Automatically discover installed models
+  timeout: 600  # 10 minutes for slow laptops (doubled)
+  max_retries: 5  # More retries for unreliable hardware
+  batch_delay: 5.0  # Longer delay for slower systems
+  checkpoint_interval: 5  # More frequent progress updates
+  
+lm_studio:
+  base_url: "http://localhost:1234"  # Default LM Studio server  
+  auto_discovery: true  # Automatically discover loaded models
+  timeout: 600  # 10 minutes for slow laptops (doubled)
+  max_retries: 5  # More retries for unreliable hardware
+  
+# Evaluation Mode Settings
+evaluation_mode:
+  default: "local"  # local, huggingface, or hybrid
+  prefer_local: true  # Prefer local models when available
+  auto_discover_models: true  # Automatically find local models
+  include_vision_models: true  # Include vision models in evaluations
+  
+inference_endpoints:
+    timeout: 600  # 10 minutes for slow laptops - consistent with local model timeouts
+    max_retries: 5  # More retries for unreliable connections
+    batch_size: 5  # Smaller batches for slower systems
 
 # Evaluation Settings
 evaluation:
   default_samples: 100  # Number of samples to test per benchmark (reduce for faster testing)
-  max_concurrent_requests: 5  # Limit concurrent API calls to avoid rate limits
+  max_concurrent_requests: 1  # SEQUENTIAL processing for slow laptops - only 1 at a time
   result_cache_days: 7  # How long to cache results locally
+  batch_delay: 10.0  # Delay between evaluations in seconds (increased for slow laptops)
   
   # Benchmark configurations
   benchmarks:
@@ -31,13 +58,14 @@ evaluation:
     
 # Storage Settings
 storage:
-  local_cache_mb: 500  # Maximum local cache size in MB
+  local_cache_mb: 100  # Maximum local cache size in MB (reduced for older computers)
   results_format: "json"  # json or csv
   cleanup_old_results: true
+  low_resource_mode: auto  # auto, true, false - auto detects based on system specs
   
   # Cloud storage (optional)
   huggingface_datasets:
-    upload_results: true
+    upload_results: false  # Disabled by default to save bandwidth/space
     dataset_name: "your-username/smaLLMs-results"
 
 # Web Interface

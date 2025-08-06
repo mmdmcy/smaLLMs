@@ -1,0 +1,108 @@
+# smaLLMs Model Configuration
+# This file contains curated lists of working models for different use cases
+# Edit this file to add/remove models instead of hardcoding them in the main code
+
+# Verified Working HuggingFace Models
+# These models have been tested and confirmed to work with the evaluation system
+huggingface_models:
+  # Tiny Models (< 1B parameters) - Fast evaluation, low resource usage
+  tiny:
+    - "google/gemma-2-2b-it"                    # Google's compact model, very reliable
+    - "Qwen/Qwen2.5-1.5B-Instruct"            # Alibaba's efficient instruction model
+    - "meta-llama/Llama-3.2-1B-Instruct"      # Meta's smallest instruction model
+    - "TinyLlama/TinyLlama-1.1B-Chat-v1.0"    # Lightweight chat model
+    
+  # Small Models (1B - 3B parameters) - Good balance of performance and speed  
+  small:
+    - "meta-llama/Llama-3.2-3B-Instruct"      # Meta's 3B instruction model
+    - "Qwen/Qwen2.5-3B-Instruct"              # Alibaba's 3B model
+    - "HuggingFaceTB/SmolLM2-1.7B-Instruct"   # HuggingFace's optimized model
+    
+  # Medium Models (3B - 7B parameters) - Higher performance, slower evaluation
+  medium:
+    - "Qwen/Qwen2.5-7B-Instruct"              # Full-size Qwen model
+    - "mistralai/Mistral-7B-Instruct-v0.3"    # Mistral's instruction-tuned model
+    
+  # Vision Models - For multimodal evaluation (if supported)
+  vision:
+    - "microsoft/Phi-3.5-vision-instruct"      # Microsoft's vision-language model
+    # Add more vision models here as they become available
+
+# Preset Configurations
+# These define which models to use for different evaluation scenarios
+presets:
+  # Quick testing - minimal time and resources
+  lightning:
+    description: "Quick 2-minute demo with 3 reliable models"
+    models:
+      - "google/gemma-2-2b-it"
+      - "Qwen/Qwen2.5-1.5B-Instruct" 
+      - "meta-llama/Llama-3.2-1B-Instruct"
+    samples: 10
+    estimated_time_minutes: 2
+    
+  # Light evaluation - good for regular testing
+  quick:
+    description: "5-minute evaluation with compact models"
+    models:
+      - "google/gemma-2-2b-it"
+      - "Qwen/Qwen2.5-1.5B-Instruct"
+      - "meta-llama/Llama-3.2-1B-Instruct"
+      - "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    samples: 25
+    estimated_time_minutes: 5
+    
+  # Standard evaluation - comprehensive testing
+  standard:
+    description: "15-minute comprehensive test with varied models"
+    models:
+      - "google/gemma-2-2b-it"
+      - "Qwen/Qwen2.5-1.5B-Instruct"
+      - "meta-llama/Llama-3.2-1B-Instruct"
+      - "meta-llama/Llama-3.2-3B-Instruct"
+      - "HuggingFaceTB/SmolLM2-1.7B-Instruct"
+    samples: 50
+    estimated_time_minutes: 15
+    
+  # Comprehensive evaluation - full testing suite
+  comprehensive:
+    description: "30-minute thorough evaluation with all model sizes"
+    models:
+      - "google/gemma-2-2b-it"
+      - "Qwen/Qwen2.5-1.5B-Instruct"
+      - "meta-llama/Llama-3.2-1B-Instruct"
+      - "meta-llama/Llama-3.2-3B-Instruct"
+      - "Qwen/Qwen2.5-3B-Instruct"
+      - "HuggingFaceTB/SmolLM2-1.7B-Instruct"
+      - "Qwen/Qwen2.5-7B-Instruct"
+    samples: 100
+    estimated_time_minutes: 30
+
+# Model Categories for Organization
+categories:
+  by_size:
+    tiny: "< 1B parameters"
+    small: "1B - 3B parameters" 
+    medium: "3B - 7B parameters"
+    large: "7B - 13B parameters"
+    xlarge: "13B+ parameters"
+    
+  by_provider:
+    meta: "Meta/Facebook models (Llama family)"
+    google: "Google models (Gemma family)"
+    alibaba: "Alibaba models (Qwen family)"
+    mistral: "Mistral AI models"
+    huggingface: "HuggingFace community models"
+    microsoft: "Microsoft models (Phi family)"
+    
+  by_capability:
+    text: "Text-only models"
+    vision: "Vision-language models"
+    code: "Code-specialized models"
+    chat: "Chat/instruction-tuned models"
+
+# Notes for Users:
+# - Add your own models to the appropriate categories above
+# - Test new models with the "lightning" preset first
+# - Remove models that don't work in your environment
+# - Consider model size vs. your hardware capabilities
