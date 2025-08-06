@@ -11,6 +11,7 @@ import time
 import json
 import sys
 import os
+import yaml
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -23,6 +24,7 @@ import threading
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.evaluator import EvaluationOrchestrator, EvaluationConfig
+from src.models.model_manager import ModelManager
 from beautiful_terminal import BeautifulTerminal, start_evaluation_display, update_evaluation_progress, evaluation_completed, evaluation_failed, start_evaluation
 
 @dataclass
@@ -94,11 +96,16 @@ class ModelPerformanceTracker:
 class IntelligentEvaluationOrchestrator:
     """
     Smart evaluation orchestrator that optimizes for cost, efficiency, and reliability.
+    Supports both cloud and local models.
     """
     
     def __init__(self, config: IntelligentEvaluationConfig):
         self.config = config
         self.orchestrator = EvaluationOrchestrator()
+        
+        # Load configuration for model manager
+        self.app_config = self._load_app_config()
+        self.model_manager = ModelManager(self.app_config)
         
         # Performance tracking
         self.model_trackers: Dict[str, ModelPerformanceTracker] = {}
@@ -133,6 +140,25 @@ class IntelligentEvaluationOrchestrator:
         self.total_time = 0.0
         self.evaluations_completed = 0
         
+    def _load_app_config(self) -> Dict[str, Any]:
+        """Load configuration from file."""
+        config_path = Path("config/config.yaml")
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                return yaml.safe_load(f)
+        else:
+            # Return default config for local models
+            return {
+                'evaluation_mode': {
+                    'default': 'local',
+                    'prefer_local': True,
+                    'auto_discover_models': True,
+                    'include_vision_models': True
+                },
+                'ollama': {'base_url': 'http://localhost:11434'},
+                'lm_studio': {'base_url': 'http://localhost:1234'}
+            }
+        
     def _setup_logging(self):
         """Setup quiet logging for beautiful terminal."""
         # Create log directory if it doesn't exist
@@ -158,6 +184,72 @@ class IntelligentEvaluationOrchestrator:
         logger.addHandler(file_handler)
         
         self.logger = logger
+    
+    def _is_local_model(self, model_name: str) -> bool:
+        """Determine if a model is local (Ollama/LM Studio) or cloud-based."""
+        # Check if explicitly prefixed
+        if model_name.startswith(("ollama:", "lm_studio:")):
+            return True
+        # Check if it looks like a HuggingFace path
+        if "/" in model_name and not model_name.startswith("./"):
+            return False
+        # Default to local for simple names
+        return True
+    
+    async def _evaluate_model_with_manager(self, model_name: str, benchmark: str, samples: int) -> Optional[Dict]:
+        """Evaluate a model using the ModelManager for local models."""
+        try:
+            # Get model instance
+            model = await self.model_manager.get_model(model_name)
+            model_info = model.get_model_info()
+            
+            # For now, we'll delegate to the existing orchestrator for actual benchmark evaluation
+            # but track that it's a local model
+            eval_config = EvaluationConfig(
+                model_name=model_name,
+                benchmark_name=benchmark,
+                num_samples=samples,
+                temperature=0.0
+            )
+            
+            # Run evaluation
+            result = await self.orchestrator.evaluate_single(eval_config)
+            
+            if result and not result.error:
+                return {
+                    'model': model_name,
+                    'benchmark': benchmark,
+                    'accuracy': result.accuracy,
+                    'latency': result.latency,
+                    'cost': 0.0 if model_info.provider in ['ollama', 'lm_studio'] else result.cost_estimate,
+                    'samples': samples,
+                    'provider': model_info.provider,
+                    'model_type': model_info.model_type,
+                    'supports_vision': model_info.supports_vision,
+                    'status': 'success',
+                    'timestamp': datetime.now().isoformat(),
+                    'local_execution': model_info.provider in ['ollama', 'lm_studio']
+                }
+            else:
+                return {
+                    'model': model_name,
+                    'benchmark': benchmark,
+                    'error': result.error if result else "Unknown error",
+                    'status': 'failed',
+                    'timestamp': datetime.now().isoformat(),
+                    'local_execution': model_info.provider in ['ollama', 'lm_studio']
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Failed to evaluate {model_name} on {benchmark}: {e}")
+            return {
+                'model': model_name,
+                'benchmark': benchmark,
+                'error': str(e),
+                'status': 'failed',
+                'timestamp': datetime.now().isoformat(),
+                'local_execution': self._is_local_model(model_name)
+            }
     
     async def run_intelligent_evaluation(self) -> Dict[str, Any]:
         """Run cost-optimized intelligent evaluation with beautiful terminal."""
@@ -230,6 +322,7 @@ class IntelligentEvaluationOrchestrator:
         """Evaluate a single model across all benchmarks intelligently."""
         model_results = []
         tracker = self.model_trackers[model]
+        is_local = self._is_local_model(model)
         
         for benchmark_idx, benchmark in enumerate(self.config.benchmarks):
             # Mark as started
@@ -238,72 +331,116 @@ class IntelligentEvaluationOrchestrator:
             # Determine sample size based on model performance so far
             samples = self._determine_sample_size(tracker)
             
-            # Rate limiting check
-            await self._ensure_rate_limit()
+            # Rate limiting check (less strict for local models)
+            if not is_local:
+                await self._ensure_rate_limit()
+            else:
+                # Small delay for local models to prevent overwhelming the system
+                await asyncio.sleep(0.5)
             
             try:
-                # Create evaluation config
-                eval_config = EvaluationConfig(
-                    model_name=model,
-                    benchmark_name=benchmark,
-                    num_samples=samples,
-                    temperature=0.0
-                )
-                
-                # Run evaluation with timing
                 eval_start = time.time()
-                result = await self.orchestrator.evaluate_single(eval_config)
+                
+                if is_local:
+                    # Use ModelManager for local models
+                    result_dict = await self._evaluate_model_with_manager(model, benchmark, samples)
+                else:
+                    # Use existing orchestrator for cloud models
+                    eval_config = EvaluationConfig(
+                        model_name=model,
+                        benchmark_name=benchmark,
+                        num_samples=samples,
+                        temperature=0.0
+                    )
+                    result = await self.orchestrator.evaluate_single(eval_config)
+                    
+                    if result and not result.error:
+                        result_dict = {
+                            'model': model,
+                            'benchmark': benchmark,
+                            'accuracy': result.accuracy,
+                            'latency': result.latency,
+                            'cost': result.cost_estimate,
+                            'samples': samples,
+                            'provider': 'huggingface',
+                            'model_type': 'text',
+                            'supports_vision': False,
+                            'status': 'success',
+                            'timestamp': datetime.now().isoformat(),
+                            'local_execution': False
+                        }
+                    else:
+                        result_dict = {
+                            'model': model,
+                            'benchmark': benchmark,
+                            'error': result.error if result else "Unknown error",
+                            'status': 'failed',
+                            'timestamp': datetime.now().isoformat(),
+                            'local_execution': False
+                        }
+                
                 eval_duration = time.time() - eval_start
                 
-                if result and not result.error:
+                if result_dict and result_dict.get('status') == 'success':
                     # Success
-                    tracker.update_success(result.accuracy, result.latency, result.cost_estimate)
-                    self.total_cost += result.cost_estimate
+                    accuracy = result_dict['accuracy']
+                    latency = result_dict.get('latency', eval_duration)
+                    cost = result_dict.get('cost', 0.0)
+                    
+                    tracker.update_success(accuracy, latency, cost)
+                    self.total_cost += cost
                     self.evaluations_completed += 1
                     
-                    evaluation_completed(model, benchmark, result.accuracy, 
-                                       result.cost_estimate, eval_duration)
+                    evaluation_completed(model, benchmark, accuracy, cost, eval_duration)
                     
-                    eval_result = {
-                        'model': model,
-                        'benchmark': benchmark,
-                        'accuracy': result.accuracy,
-                        'latency': result.latency,
-                        'cost': result.cost_estimate,
-                        'samples': samples,
-                        'duration': eval_duration,
-                        'status': 'success',
-                        'timestamp': datetime.now().isoformat()
-                    }
+                    # Add duration to result
+                    result_dict['duration'] = eval_duration
+                    model_results.append(result_dict)
                     
-                    model_results.append(eval_result)
+                    # Save individual result immediately
+                    await self._save_individual_result(result_dict)
                     
-                    # Save intermediate result immediately
-                    if self.config.save_after_each:
-                        await self._save_intermediate_result(eval_result)
-                
                 else:
                     # Failure
-                    error_msg = result.error if result else "No result returned"
                     tracker.update_failure()
+                    error_msg = result_dict.get('error', 'Unknown error') if result_dict else 'No result'
+                    evaluation_failed(model, benchmark, error_msg)
                     
-                    evaluation_failed(model, benchmark)
-                    
-                    # Check if we should stop this model
-                    if not tracker.should_continue:
-                        break
+                    if result_dict:
+                        result_dict['duration'] = eval_duration
+                        model_results.append(result_dict)
+                        await self._save_individual_result(result_dict)
                 
             except Exception as e:
+                # Unexpected error
                 tracker.update_failure()
-                evaluation_failed(model, benchmark)
+                error_msg = f"Evaluation error: {str(e)}"
+                self.logger.error(f"Error evaluating {model} on {benchmark}: {error_msg}")
+                evaluation_failed(model, benchmark, error_msg)
                 
-                # Check if we should stop this model
-                if not tracker.should_continue:
-                    break
+                error_result = {
+                    'model': model,
+                    'benchmark': benchmark,
+                    'error': error_msg,
+                    'status': 'error',
+                    'duration': time.time() - eval_start,
+                    'timestamp': datetime.now().isoformat(),
+                    'local_execution': is_local
+                }
+                model_results.append(error_result)
+                await self._save_individual_result(error_result)
             
-            # Delay between benchmark evaluations
+            # Check if we should continue with this model
+            if not tracker.should_continue:
+                self.logger.warning(f"Stopping evaluation of {model} due to poor performance")
+                break
+            
+            # Delay between benchmarks for same model
             if benchmark_idx < len(self.config.benchmarks) - 1:
-                await asyncio.sleep(self.config.delay_between_evals)
+                delay = 1.0 if is_local else self.config.delay_between_evals
+                await asyncio.sleep(delay)
+        
+        return model_results
         
         return model_results
     
@@ -356,6 +493,20 @@ class IntelligentEvaluationOrchestrator:
         
         self.requests_this_minute += 1
         self.last_request_time = time.time()
+    
+    async def _save_individual_result(self, result: Dict):
+        """Save individual evaluation result immediately with enhanced metadata."""
+        try:
+            model_name = result.get('model', 'unknown').replace('/', '_').replace(':', '_')
+            benchmark_name = result.get('benchmark', 'unknown')
+            timestamp = result.get('timestamp', datetime.now().isoformat()).replace(':', '_')
+            filename = f"{model_name}_{benchmark_name}_{timestamp[:19]}.json"
+            
+            filepath = self.run_path / "individual_results" / filename
+            with open(filepath, 'w') as f:
+                json.dump(result, f, indent=2)
+        except Exception as e:
+            self.logger.error(f"Failed to save individual result: {e}")
     
     async def _save_intermediate_result(self, result: Dict):
         """Save individual evaluation result in organized structure."""
