@@ -9,35 +9,35 @@ from pathlib import Path
 
 def check_ollama():
     """Check if Ollama is running and list models."""
-    print("🔍 Checking Ollama...")
+    print(" Checking Ollama...")
     try:
         # Try command line first
         result = subprocess.run(['ollama', 'list'], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             lines = result.stdout.strip().split('\n')[1:]  # Skip header
             models = [line.split()[0] for line in lines if line.strip()]
-            print(f"✅ Ollama: Found {len(models)} models via command line")
+            print(f" Ollama: Found {len(models)} models via command line")
             for model in models[:5]:  # Show first 5
-                print(f"   💬 {model}")
+                print(f"    {model}")
             if len(models) > 5:
                 print(f"   ... and {len(models) - 5} more")
             return True, models
         else:
-            print(f"❌ Ollama command failed: {result.stderr}")
+            print(f" Ollama command failed: {result.stderr}")
             return False, []
     except subprocess.TimeoutExpired:
-        print("❌ Ollama command timed out")
+        print(" Ollama command timed out")
         return False, []
     except FileNotFoundError:
-        print("❌ Ollama not found in PATH")
+        print(" Ollama not found in PATH")
         return False, []
     except Exception as e:
-        print(f"❌ Ollama error: {e}")
+        print(f" Ollama error: {e}")
         return False, []
 
 def check_lm_studio():
     """Check if LM Studio server is running."""
-    print("\n🔍 Checking LM Studio...")
+    print("\n Checking LM Studio...")
     ports_to_try = [1234, 1235, 8080, 8000]
     
     for port in ports_to_try:
@@ -48,10 +48,10 @@ def check_lm_studio():
             if response.status_code == 200:
                 data = response.json()
                 models = data.get('data', [])
-                print(f"✅ LM Studio: Found server on port {port} with {len(models)} models")
+                print(f" LM Studio: Found server on port {port} with {len(models)} models")
                 for model in models:
                     name = model.get('id', 'unknown')
-                    print(f"   💬 {name}")
+                    print(f"    {name}")
                 return True, port, models
             else:
                 print(f"   Port {port}: HTTP {response.status_code}")
@@ -62,22 +62,22 @@ def check_lm_studio():
         except Exception as e:
             print(f"   Port {port}: {e}")
     
-    print("❌ LM Studio: No server found on common ports")
+    print(" LM Studio: No server found on common ports")
     print("   Make sure LM Studio is running with 'Start Server' enabled")
     return False, None, []
 
 def check_config():
     """Check current configuration."""
-    print("\n🔍 Checking Configuration...")
+    print("\n Checking Configuration...")
     config_path = Path("config/config.yaml")
     if config_path.exists():
-        print("✅ Config file found")
+        print(" Config file found")
         # Could parse YAML here if needed
     else:
-        print("⚠️  No config file found, using defaults")
+        print("  No config file found, using defaults")
 
 def main():
-    print("🚀 smaLLMs Local Services Diagnostic\n")
+    print(" smaLLMs Local Services Diagnostic\n")
     
     # Check services
     ollama_ok, ollama_models = check_ollama()
@@ -85,12 +85,12 @@ def main():
     check_config()
     
     # Summary
-    print(f"\n📊 Summary:")
-    print(f"   Ollama: {'✅ Working' if ollama_ok else '❌ Not working'} ({len(ollama_models)} models)")
-    print(f"   LM Studio: {'✅ Working' if lms_ok else '❌ Not working'} ({len(lms_models) if lms_ok else 0} models)")
+    print(f"\n Summary:")
+    print(f"   Ollama: {' Working' if ollama_ok else ' Not working'} ({len(ollama_models)} models)")
+    print(f"   LM Studio: {' Working' if lms_ok else ' Not working'} ({len(lms_models) if lms_ok else 0} models)")
     
     if not lms_ok:
-        print(f"\n💡 To fix LM Studio:")
+        print(f"\n To fix LM Studio:")
         print("   1. Open LM Studio application")
         print("   2. Go to 'Local Server' or 'Server' tab")
         print("   3. Click 'Start Server'")
@@ -98,7 +98,7 @@ def main():
         print("   5. Server should show 'Running on http://localhost:1234'")
     
     if ollama_ok or lms_ok:
-        print(f"\n🎉 Ready to run: python smaLLMs.py")
+        print(f"\n Ready to run: python smaLLMs.py")
         if ollama_ok and not lms_ok:
             print("   Use 'ollama' command for Ollama-only evaluation")
         elif lms_ok and not ollama_ok:

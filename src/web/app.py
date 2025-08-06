@@ -49,7 +49,7 @@ class WebInterface:
             
             # Header
             gr.Markdown("""
-            # 🧠 smaLLMs - State-of-the-Art Small Model Evaluation
+            #  smaLLMs - State-of-the-Art Small Model Evaluation
             
             **The ultimate platform for evaluating small language models (1B-20B parameters)**
             
@@ -58,27 +58,27 @@ class WebInterface:
             
             with gr.Tabs():
                 # Quick Evaluation Tab
-                with gr.Tab("🚀 Quick Evaluation", id="quick_eval"):
+                with gr.Tab(" Quick Evaluation", id="quick_eval"):
                     self._create_quick_eval_tab()
                 
                 # Comprehensive Evaluation Tab  
-                with gr.Tab("📊 Comprehensive Evaluation", id="comprehensive"):
+                with gr.Tab(" Comprehensive Evaluation", id="comprehensive"):
                     self._create_comprehensive_tab()
                 
                 # Leaderboard Tab
-                with gr.Tab("🏆 Leaderboard", id="leaderboard"):
+                with gr.Tab(" Leaderboard", id="leaderboard"):
                     self._create_leaderboard_tab()
                 
                 # Model Comparison Tab
-                with gr.Tab("⚖️ Model Comparison", id="comparison"):
+                with gr.Tab(" Model Comparison", id="comparison"):
                     self._create_comparison_tab()
                 
                 # Results Explorer Tab
-                with gr.Tab("🔍 Results Explorer", id="results"):
+                with gr.Tab(" Results Explorer", id="results"):
                     self._create_results_tab()
                 
                 # Settings Tab
-                with gr.Tab("⚙️ Settings", id="settings"):
+                with gr.Tab(" Settings", id="settings"):
                     self._create_settings_tab()
         
         return interface
@@ -114,7 +114,7 @@ class WebInterface:
                     info="More samples = more accurate but slower"
                 )
                 
-                eval_button = gr.Button("🚀 Start Evaluation", variant="primary", size="lg")
+                eval_button = gr.Button(" Start Evaluation", variant="primary", size="lg")
             
             with gr.Column(scale=2):
                 status_output = gr.Textbox(
@@ -164,7 +164,7 @@ class WebInterface:
                     label="Samples per Benchmark"
                 )
                 
-                comprehensive_button = gr.Button("📊 Start Comprehensive Evaluation", variant="primary")
+                comprehensive_button = gr.Button(" Start Comprehensive Evaluation", variant="primary")
             
             with gr.Column():
                 comprehensive_status = gr.Textbox(
@@ -187,12 +187,12 @@ class WebInterface:
     
     def _create_leaderboard_tab(self):
         """Create the leaderboard tab."""
-        gr.Markdown("### 🏆 Model Leaderboard")
+        gr.Markdown("###  Model Leaderboard")
         gr.Markdown("Real-time rankings of evaluated models across all benchmarks.")
         
         with gr.Row():
-            refresh_button = gr.Button("🔄 Refresh Leaderboard", variant="secondary")
-            export_button = gr.Button("📥 Export Results", variant="secondary")
+            refresh_button = gr.Button(" Refresh Leaderboard", variant="secondary")
+            export_button = gr.Button(" Export Results", variant="secondary")
         
         leaderboard_display = gr.Dataframe(
             label="Current Leaderboard",
@@ -218,7 +218,7 @@ class WebInterface:
     
     def _create_comparison_tab(self):
         """Create the model comparison tab."""
-        gr.Markdown("### ⚖️ Model Comparison")
+        gr.Markdown("###  Model Comparison")
         gr.Markdown("Compare specific models head-to-head on selected benchmarks.")
         
         with gr.Row():
@@ -234,7 +234,7 @@ class WebInterface:
                 value="gsm8k"
             )
         
-        compare_button = gr.Button("⚖️ Compare Models", variant="primary")
+        compare_button = gr.Button(" Compare Models", variant="primary")
         
         comparison_results = gr.Plot(
             label="Comparison Results",
@@ -254,7 +254,7 @@ class WebInterface:
     
     def _create_results_tab(self):
         """Create the results explorer tab."""
-        gr.Markdown("### 🔍 Results Explorer")
+        gr.Markdown("###  Results Explorer")
         gr.Markdown("Browse and analyze detailed evaluation results.")
         
         with gr.Row():
@@ -271,7 +271,7 @@ class WebInterface:
                     value="All Benchmarks"
                 )
                 
-                search_button = gr.Button("🔍 Search Results")
+                search_button = gr.Button(" Search Results")
             
             with gr.Column(scale=3):
                 results_table = gr.Dataframe(
@@ -291,7 +291,7 @@ class WebInterface:
     
     def _create_settings_tab(self):
         """Create the settings tab."""
-        gr.Markdown("### ⚙️ Platform Settings")
+        gr.Markdown("###  Platform Settings")
         gr.Markdown("Configure evaluation parameters and storage settings.")
         
         with gr.Row():
@@ -334,7 +334,7 @@ class WebInterface:
                 )
                 
                 with gr.Row():
-                    save_settings_btn = gr.Button("💾 Save Settings", variant="primary")
+                    save_settings_btn = gr.Button(" Save Settings", variant="primary")
                     cleanup_btn = gr.Button("🧹 Cleanup Cache", variant="secondary")
         
         save_settings_btn.click(
@@ -383,7 +383,7 @@ class WebInterface:
         
         try:
             # Update status
-            status = f"🚀 Starting REAL evaluation of {model_name} on {benchmark} with {samples} samples..."
+            status = f" Starting REAL evaluation of {model_name} on {benchmark} with {samples} samples..."
             
             # Create evaluation config
             config = EvaluationConfig(
@@ -400,7 +400,7 @@ class WebInterface:
                 result = loop.run_until_complete(self.orchestrator.evaluate_single(config))
                 
                 if result.error:
-                    error_status = f"❌ Evaluation failed: {result.error}"
+                    error_status = f" Evaluation failed: {result.error}"
                     return error_status, gr.JSON(visible=False)
                 
                 result_dict = {
@@ -413,7 +413,7 @@ class WebInterface:
                     "timestamp": result.timestamp
                 }
                 
-                final_status = f"✅ REAL evaluation completed!\nModel: {result.model_name}\nBenchmark: {result.benchmark_name}\nAccuracy: {result.accuracy:.3f}\nLatency: {result.latency:.1f}s\nCost: ${result.cost_estimate:.6f}"
+                final_status = f" REAL evaluation completed!\nModel: {result.model_name}\nBenchmark: {result.benchmark_name}\nAccuracy: {result.accuracy:.3f}\nLatency: {result.latency:.1f}s\nCost: ${result.cost_estimate:.6f}"
                 
                 return final_status, gr.JSON(value=result_dict, visible=True)
                 
@@ -421,7 +421,7 @@ class WebInterface:
                 loop.close()
         
         except Exception as e:
-            error_status = f"❌ REAL evaluation failed: {str(e)}"
+            error_status = f" REAL evaluation failed: {str(e)}"
             return error_status, gr.JSON(visible=False)
     
     def _run_comprehensive_evaluation(self, models_text: str, benchmarks: List[str], samples: int):
@@ -430,7 +430,7 @@ class WebInterface:
         
         models = [m.strip() for m in models_text.split('\n') if m.strip()]
         
-        status = f"🚀 Starting REAL comprehensive evaluation...\nModels: {len(models)}\nBenchmarks: {len(benchmarks)}\nSamples per benchmark: {samples}\n\n"
+        status = f" Starting REAL comprehensive evaluation...\nModels: {len(models)}\nBenchmarks: {len(benchmarks)}\nSamples per benchmark: {samples}\n\n"
         
         try:
             # Create evaluation configs for all combinations
@@ -480,7 +480,7 @@ class WebInterface:
                 successful_results = [r for r in results if not r.error]
                 failed_results = [r for r in results if r.error]
                 
-                final_status = status + f"✅ REAL comprehensive evaluation completed!\nTotal evaluations: {len(results)}\nSuccessful: {len(successful_results)}\nFailed: {len(failed_results)}"
+                final_status = status + f" REAL comprehensive evaluation completed!\nTotal evaluations: {len(results)}\nSuccessful: {len(successful_results)}\nFailed: {len(failed_results)}"
                 
                 return final_status, gr.Dataframe(value=results_df, visible=True)
                 
@@ -488,7 +488,7 @@ class WebInterface:
                 loop.close()
         
         except Exception as e:
-            error_status = status + f"❌ REAL comprehensive evaluation failed: {str(e)}"
+            error_status = status + f" REAL comprehensive evaluation failed: {str(e)}"
             empty_df = pd.DataFrame()
             return error_status, gr.Dataframe(value=empty_df, visible=True)
     
@@ -706,7 +706,7 @@ def create_web_app(config_path: str = "config/config.yaml", share: bool = False,
     web_interface = WebInterface(config_path)
     app = web_interface.create_interface()
     
-    print("🧠 Starting smaLLMs Web Interface...")
+    print(" Starting smaLLMs Web Interface...")
     
     # Try to find an available port if the default is taken
     import socket
@@ -724,10 +724,10 @@ def create_web_app(config_path: str = "config/config.yaml", share: bool = False,
         server_port += 1
     
     if server_port != original_port:
-        print(f"⚠️  Port {original_port} was busy, using port {server_port} instead")
+        print(f"  Port {original_port} was busy, using port {server_port} instead")
     
-    print(f"📊 Platform ready at: http://{server_name}:{server_port}")
-    print("🚀 Open your browser and start evaluating small language models!")
+    print(f" Platform ready at: http://{server_name}:{server_port}")
+    print(" Open your browser and start evaluating small language models!")
     
     app.launch(
         share=share,

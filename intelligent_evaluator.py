@@ -290,10 +290,10 @@ class IntelligentEvaluationOrchestrator:
         await self._save_intelligent_report(final_results)
         
         # Print final summary in terminal
-        print(f"\n\n🎯 EVALUATION COMPLETED!")
-        print(f"✅ Total Evaluations: {len(all_results)}")
-        print(f"💰 Total Cost: ${final_results['execution_summary']['total_cost']:.4f}")
-        print(f"⏱️  Duration: {self.total_time/60:.1f} minutes")
+        print(f"\n\n EVALUATION COMPLETED!")
+        print(f" Total Evaluations: {len(all_results)}")
+        print(f" Total Cost: ${final_results['execution_summary']['total_cost']:.4f}")
+        print(f"  Duration: {self.total_time/60:.1f} minutes")
         
         return final_results
     
@@ -740,17 +740,17 @@ async def main():
     print("=" * 80)
     
     exec_summary = results['execution_summary']
-    print(f"✅ Total Evaluations: {exec_summary['total_evaluations']}")
-    print(f"💰 Total Cost: ${exec_summary['total_cost']:.4f}")
-    print(f"⏱️  Duration: {exec_summary['total_time_minutes']:.1f} minutes")
-    print(f"📊 Cost Efficiency: ${exec_summary['avg_cost_per_eval']:.6f} per evaluation")
-    print(f"📁 Results saved to: smaLLMs_results/")
+    print(f" Total Evaluations: {exec_summary['total_evaluations']}")
+    print(f" Total Cost: ${exec_summary['total_cost']:.4f}")
+    print(f"  Duration: {exec_summary['total_time_minutes']:.1f} minutes")
+    print(f" Cost Efficiency: ${exec_summary['avg_cost_per_eval']:.6f} per evaluation")
+    print(f" Results saved to: smaLLMs_results/")
     
     if results['rankings']['cost_efficiency']:
-        print(f"\n🏆 Most Cost Efficient: {results['rankings']['cost_efficiency'][0][0]}")
-        print(f"🎯 Best Performance: {results['rankings']['performance'][0][0]}")
+        print(f"\n Most Cost Efficient: {results['rankings']['cost_efficiency'][0][0]}")
+        print(f" Best Performance: {results['rankings']['performance'][0][0]}")
     
-    print(f"\n💡 Run 'python simple_exporter.py' to create website export")
+    print(f"\n Run 'python simple_exporter.py' to create website export")
 
 if __name__ == "__main__":
     asyncio.run(main())

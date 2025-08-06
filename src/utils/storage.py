@@ -142,20 +142,27 @@ class ResultStorage:
         return str(local_path)
     
     def _save_local_result_session(self, result, session_dir: Path, filename: str) -> Path:
-        """Save result in session directory structure."""
+        """Save result in session directory structure with comprehensive statistics."""
         file_path = session_dir / filename
-        result_dict = {
-            'model_name': result.model_name,
-            'benchmark_name': result.benchmark_name,
-            'accuracy': result.accuracy,
-            'latency': result.latency,
-            'cost_estimate': result.cost_estimate,
-            'timestamp': result.timestamp,
-            'num_samples': result.num_samples,
-            'detailed_results': result.detailed_results if result.detailed_results else [],  # Keep all results for debugging
-            'error': result.error,
-            'session_id': self.current_session_id  # Track which session this belongs to
-        }
+        
+        # Use enhanced to_dict method if available, otherwise fallback to basic dict
+        if hasattr(result, 'to_dict'):
+            result_dict = result.to_dict()
+            result_dict['session_id'] = self.current_session_id  # Track which session this belongs to
+        else:
+            # Fallback for older result objects
+            result_dict = {
+                'model_name': result.model_name,
+                'benchmark_name': result.benchmark_name,
+                'accuracy': result.accuracy,
+                'latency': result.latency,
+                'cost_estimate': result.cost_estimate,
+                'timestamp': result.timestamp,
+                'num_samples': result.num_samples,
+                'detailed_results': result.detailed_results if result.detailed_results else [],
+                'error': result.error,
+                'session_id': self.current_session_id
+            }
         
         with open(file_path, 'w') as f:
             json.dump(result_dict, f, indent=2)
@@ -185,19 +192,28 @@ class ResultStorage:
         return file_path
     
     def _save_local_result_cache(self, result, filename: str) -> Path:
-        """Save result in cache directory for backward compatibility."""
+        """Save result in cache directory for backward compatibility with comprehensive statistics."""
         file_path = self.cache_dir / filename
-        result_dict = {
-            'model_name': result.model_name,
-            'benchmark_name': result.benchmark_name,
-            'accuracy': result.accuracy,
-            'latency': result.latency,
-            'cost_estimate': result.cost_estimate,
-            'timestamp': result.timestamp,
-            'num_samples': result.num_samples,
-            'detailed_results': result.detailed_results[:5] if result.detailed_results else [],  # Limit for cache
-            'error': result.error
-        }
+        
+        # Use enhanced to_dict method if available, otherwise fallback to basic dict
+        if hasattr(result, 'to_dict'):
+            result_dict = result.to_dict()
+            # Limit detailed results for cache to save space
+            if 'detailed_results' in result_dict and result_dict['detailed_results']:
+                result_dict['detailed_results'] = result_dict['detailed_results'][:5]
+        else:
+            # Fallback for older result objects
+            result_dict = {
+                'model_name': result.model_name,
+                'benchmark_name': result.benchmark_name,
+                'accuracy': result.accuracy,
+                'latency': result.latency,
+                'cost_estimate': result.cost_estimate,
+                'timestamp': result.timestamp,
+                'num_samples': result.num_samples,
+                'detailed_results': result.detailed_results[:5] if result.detailed_results else [],
+                'error': result.error
+            }
         
         with open(file_path, 'w') as f:
             json.dump(result_dict, f, indent=2)
