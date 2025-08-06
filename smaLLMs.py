@@ -449,6 +449,21 @@ class SmaLLMsLauncher:
                     success = await self.run_marathon_mode()
                     if success:
                         print(f"\n{self.terminal.GREEN} Marathon Mode completed! Check 'status' for comprehensive results{self.terminal.RESET}")
+                        
+                        # Automatic export after marathon completion
+                        print(f"\n{self.terminal.CYAN} Auto-exporting results...{self.terminal.RESET}")
+                        try:
+                            exported_files = self.exporter.export_for_website()
+                            if exported_files:
+                                print(f"{self.terminal.GREEN} ✅ Auto-export completed!{self.terminal.RESET}")
+                                print(f"{self.terminal.BOLD}Exported files:{self.terminal.RESET}")
+                                for file_type, file_path in exported_files.items():
+                                    print(f"   {file_type.upper()}: {Path(file_path).name}")
+                            else:
+                                print(f"{self.terminal.YELLOW} No results found to export{self.terminal.RESET}")
+                        except Exception as e:
+                            print(f"{self.terminal.YELLOW} Auto-export failed: {e}{self.terminal.RESET}")
+                            print(f" You can manually run 'export' command later")
                 elif cmd == 'status':
                     self.show_status()
                 elif cmd == 'space':
@@ -541,7 +556,21 @@ class SmaLLMsLauncher:
             if result:
                 print(f"\n{self.terminal.GREEN} MARATHON MODE COMPLETED!{self.terminal.RESET}")
                 print(f" Comprehensive evaluation of {len(model_names)} models completed")
-                print(f" Run 'export' to create website files with all results")
+                
+                # Automatic export after marathon completion
+                print(f"\n{self.terminal.CYAN} Auto-exporting results...{self.terminal.RESET}")
+                try:
+                    exported_files = self.exporter.export_for_website()
+                    if exported_files:
+                        print(f"{self.terminal.GREEN} ✅ Auto-export completed!{self.terminal.RESET}")
+                        print(f"{self.terminal.BOLD}Exported files:{self.terminal.RESET}")
+                        for file_type, file_path in exported_files.items():
+                            print(f"   {file_type.upper()}: {Path(file_path).name}")
+                    else:
+                        print(f"{self.terminal.YELLOW} No results found to export{self.terminal.RESET}")
+                except Exception as e:
+                    print(f"{self.terminal.YELLOW} Auto-export failed: {e}{self.terminal.RESET}")
+                    print(f" You can manually run 'export' command later")
             
             return result
             
@@ -1580,6 +1609,21 @@ class SmaLLMsLauncher:
             print(f" Results: {completed_models}/{total_models} models successful")
             print(f" Total evaluations: {len(completed_evaluations)}")
             
+            # Automatic export after evaluation completion
+            print(f"\n{self.terminal.CYAN} Auto-exporting results...{self.terminal.RESET}")
+            try:
+                exported_files = self.exporter.export_for_website()
+                if exported_files:
+                    print(f"{self.terminal.GREEN} ✅ Auto-export completed!{self.terminal.RESET}")
+                    print(f"{self.terminal.BOLD}Exported files:{self.terminal.RESET}")
+                    for file_type, file_path in exported_files.items():
+                        print(f"   {file_type.upper()}: {Path(file_path).name}")
+                else:
+                    print(f"{self.terminal.YELLOW} No results found to export{self.terminal.RESET}")
+            except Exception as e:
+                print(f"{self.terminal.YELLOW} Auto-export failed: {e}{self.terminal.RESET}")
+                print(f" You can manually run 'export' command later")
+            
             if failed_models:
                 print(f"\n{self.terminal.YELLOW}  Models with issues: {len(failed_models)}{self.terminal.RESET}")
                 for model in failed_models:
@@ -1711,7 +1755,22 @@ class SmaLLMsLauncher:
             
             print(f"\n{self.terminal.GREEN} Evaluation completed! {completed_models}/{total_models} models successful{self.terminal.RESET}")
             print(f" Results saved to smaLLMs_results/")
-            print(f" Run 'export' to create website files")
+            
+            # Automatic export after cloud evaluation completion
+            print(f"\n{self.terminal.CYAN} Auto-exporting results...{self.terminal.RESET}")
+            try:
+                exported_files = self.exporter.export_for_website()
+                if exported_files:
+                    print(f"{self.terminal.GREEN} ✅ Auto-export completed!{self.terminal.RESET}")
+                    print(f"{self.terminal.BOLD}Exported files:{self.terminal.RESET}")
+                    for file_type, file_path in exported_files.items():
+                        print(f"   {file_type.upper()}: {Path(file_path).name}")
+                else:
+                    print(f"{self.terminal.YELLOW} No results found to export{self.terminal.RESET}")
+            except Exception as e:
+                print(f"{self.terminal.YELLOW} Auto-export failed: {e}{self.terminal.RESET}")
+                print(f" You can manually run 'export' command later")
+            
             return True
             
         except Exception as e:
@@ -1823,6 +1882,22 @@ class SmaLLMsLauncher:
                     success = asyncio.run(self.run_marathon_mode())
                     if success:
                         print(f"\n{self.terminal.GREEN} Marathon Mode completed! Check 'status' for comprehensive results{self.terminal.RESET}")
+                        
+                        # Automatic export after marathon completion
+                        print(f"\n{self.terminal.CYAN} Auto-exporting results...{self.terminal.RESET}")
+                        try:
+                            exported_files = self.exporter.export_for_website()
+                            if exported_files:
+                                print(f"{self.terminal.GREEN} ✅ Auto-export completed!{self.terminal.RESET}")
+                                print(f"{self.terminal.BOLD}Exported files:{self.terminal.RESET}")
+                                for file_type, file_path in exported_files.items():
+                                    print(f"   {file_type.upper()}: {Path(file_path).name}")
+                            else:
+                                print(f"{self.terminal.YELLOW} No results found to export{self.terminal.RESET}")
+                        except Exception as e:
+                            print(f"{self.terminal.YELLOW} Auto-export failed: {e}{self.terminal.RESET}")
+                            print(f" You can manually run 'export' command later")
+                    
                     self.print_welcome()  # Return to main menu
                     
                 else:

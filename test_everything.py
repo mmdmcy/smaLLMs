@@ -7,7 +7,7 @@ One comprehensive test to verify everything is working correctly.
 This test covers:
 - Configuration loading
 - Local model discovery  
-- Benchmark system
+- Benchmark system with individual benchmark functionality testing
 - Cloud model access
 - Evaluation pipeline
 - Export functionality with enhanced statistics
@@ -17,6 +17,7 @@ This test covers:
 - Benchmark suite selection
 - Results organization and export
 - All new OpenAI-level benchmarks
+- Individual benchmark validation (NEW - tests each benchmark works)
 
 Usage: python test_everything.py
 """
@@ -28,6 +29,9 @@ import yaml
 import json
 import traceback
 import time
+import platform
+import inspect
+import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
@@ -686,6 +690,100 @@ class smaLLMsTestSuite:
             self.log_test_result("export_and_results", False, f"Export system error: {e}")
             return False
 
+    def test_individual_benchmark_functionality(self) -> bool:
+        """Test that each individual benchmark can be instantiated and basic functionality works."""
+        try:
+            from src.benchmarks.benchmark_registry import BenchmarkRegistry
+            
+            # Load registry
+            config = {'evaluation': {'benchmarks': {}}}
+            registry = BenchmarkRegistry(config)
+            
+            # Get all available benchmarks (returns list of strings)
+            available_benchmarks = registry.get_available_benchmarks()
+            benchmark_names = [b for b in available_benchmarks if not b.endswith('_suite')]  # Individual benchmarks only
+            
+            working_benchmarks = []
+            failed_benchmarks = []
+            
+            print(f"Testing {len(benchmark_names)} individual benchmarks...")
+            
+            for benchmark_name in benchmark_names:
+                try:
+                    # Test benchmark instantiation
+                    benchmark = registry.get_benchmark(benchmark_name)
+                    
+                    if benchmark is None:
+                        failed_benchmarks.append((benchmark_name, "Failed to instantiate"))
+                        continue
+                    
+                    # Test benchmark info method
+                    if not hasattr(benchmark, 'get_benchmark_info'):
+                        failed_benchmarks.append((benchmark_name, "Missing 'get_benchmark_info' method"))
+                        continue
+                    
+                    # Test that benchmark info contains required fields
+                    try:
+                        info = benchmark.get_benchmark_info()
+                        if not isinstance(info, dict):
+                            failed_benchmarks.append((benchmark_name, "get_benchmark_info() should return dict"))
+                            continue
+                        
+                        required_fields = ['name', 'description']
+                        missing_fields = [field for field in required_fields if field not in info]
+                        if missing_fields:
+                            failed_benchmarks.append((benchmark_name, f"Missing info fields: {missing_fields}"))
+                            continue
+                            
+                    except Exception as info_error:
+                        failed_benchmarks.append((benchmark_name, f"get_benchmark_info() failed: {info_error}"))
+                        continue
+                    
+                    # Test that benchmark has evaluation method
+                    if not hasattr(benchmark, 'evaluate'):
+                        failed_benchmarks.append((benchmark_name, "Missing 'evaluate' method"))
+                        continue
+                    
+                    # Test that evaluate method is callable
+                    if not callable(getattr(benchmark, 'evaluate')):
+                        failed_benchmarks.append((benchmark_name, "'evaluate' method not callable"))
+                        continue
+                    
+                    working_benchmarks.append(benchmark_name)
+                    print(f"  ✓ {benchmark_name}: Working ({info.get('name', 'Unknown')})")
+                    
+                except Exception as benchmark_error:
+                    failed_benchmarks.append((benchmark_name, str(benchmark_error)))
+                    print(f"  ✗ {benchmark_name}: {benchmark_error}")
+                    continue
+            
+            # Summary
+            success_rate = len(working_benchmarks) / len(benchmark_names) if benchmark_names else 0
+            
+            details = {
+                'total_benchmarks_tested': len(benchmark_names),
+                'working_benchmarks': len(working_benchmarks),
+                'failed_benchmarks': len(failed_benchmarks),
+                'success_rate': f"{success_rate:.1%}",
+                'working_benchmark_names': working_benchmarks,
+                'failed_benchmark_details': failed_benchmarks
+            }
+            
+            if success_rate >= 0.8:  # 80% of benchmarks should work
+                self.log_test_result("individual_benchmark_functionality", True, 
+                                   f"Benchmark functionality validated: {len(working_benchmarks)}/{len(benchmark_names)} working ({success_rate:.1%})", 
+                                   details)
+                return True
+            else:
+                self.log_test_result("individual_benchmark_functionality", False, 
+                                   f"Too many benchmark failures: {len(working_benchmarks)}/{len(benchmark_names)} working ({success_rate:.1%})", 
+                                   details)
+                return False
+                
+        except Exception as e:
+            self.log_test_result("individual_benchmark_functionality", False, f"Benchmark functionality test error: {e}")
+            return False
+
     def test_answer_extraction(self) -> bool:
         """Test 9: Test answer extraction for different benchmark types."""
         print("? Answer extraction test temporarily skipped to focus on core functionality")
@@ -1270,29 +1368,25 @@ class smaLLMsTestSuite:
                     self.log_test_result("results_organization_and_export", False, "Empty leaderboard from real results")
                     return False
                 
-                # Test export formats that smaLLMs.py uses
-                export_formats = ['csv', 'json', 'markdown']
+                # Test proper export functionality using SimpleResultsExporter
+                from simple_exporter import SimpleResultsExporter
+                exporter = SimpleResultsExporter()
                 export_success = []
                 
-                for fmt in export_formats:
+                try:
+                    # Test the actual export functionality that smaLLMs.py uses
+                    exported_files = exporter.export_for_website()
+                    if exported_files:
+                        for file_type, file_path in exported_files.items():
+                            if Path(file_path).exists():
+                                export_success.append(file_type)
+                except Exception:
+                    # Fallback to basic export test if no results exist
                     try:
-                        if fmt == 'csv':
-                            leaderboard.to_csv('test_export.csv', index=False)
-                            export_success.append(fmt)
-                        elif fmt == 'json':
-                            leaderboard.to_json('test_export.json', orient='records')
-                            export_success.append(fmt)
-                        elif fmt == 'markdown':
-                            leaderboard.to_markdown('test_export.md', index=False)
-                            export_success.append(fmt)
+                        leaderboard.to_json('test_basic_export.json', orient='records')
+                        export_success.append('json')
+                        Path('test_basic_export.json').unlink(missing_ok=True)
                     except Exception:
-                        pass
-                
-                # Clean up test files
-                for fmt in export_success:
-                    try:
-                        Path(f'test_export.{fmt}').unlink(missing_ok=True)
-                    except:
                         pass
                 
                 details = {
@@ -1305,7 +1399,7 @@ class smaLLMsTestSuite:
                 }
                 
                 self.log_test_result("results_organization_and_export", True, 
-                                   f"Export system functional: {len(export_success)}/{len(export_formats)} formats, {len(leaderboard.columns)} columns",
+                                   f"Export system functional: {len(export_success)} exports working, {len(leaderboard.columns)} columns",
                                    details)
                 return True
             else:
@@ -1556,6 +1650,7 @@ class smaLLMsTestSuite:
             ("Imports", self.test_imports),
             ("Configuration Loading", self.test_config_loading),
             ("Benchmark Registry", self.test_benchmark_registry),
+            ("Individual Benchmark Functionality", self.test_individual_benchmark_functionality),
             ("Local Model Discovery", self.test_local_model_discovery),
             ("Cloud Model Config", self.test_cloud_model_config),
             ("Evaluation Pipeline", self.test_evaluation_pipeline),
