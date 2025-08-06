@@ -377,106 +377,116 @@ class SimpleResultsExporter:
         print(f" CSV exported: {csv_file.name}")
         
         # 2. JSON Export (for web APIs)
-        # Convert DataFrame to clean dict with Python types
-        leaderboard_records = []
-        for _, row in df.iterrows():
-            record = {}
-            for col, val in row.items():
-                # Convert numpy types to Python types
-                if pd.isna(val):
-                    record[col] = None
-                elif isinstance(val, (np.integer, np.int64, np.int32)):
-                    record[col] = int(val)
-                elif isinstance(val, (np.floating, np.float64, np.float32)):
-                    record[col] = float(val)
-                elif isinstance(val, np.ndarray):
-                    record[col] = val.tolist()
-                else:
-                    record[col] = val
-            leaderboard_records.append(record)
-        
+        # Create beautiful structured JSON export
         json_data = {
-            'metadata': {
-                'generated_at': datetime.now().isoformat(),
-                'total_models': int(len(df)),
-                'total_evaluations': int(df['Evaluations'].sum()),
-                'evaluation_date': timestamp,
-                'evaluation_details': self.eval_metadata,  # Include evaluation context
-                'export_structure': 'organized',
-                'export_path': str(run_output)
+            "export_metadata": {
+                "generated_at": datetime.now().isoformat(),
+                "format_version": "1.0",
+                "description": "smaLLMs Evaluation Results Export",
+                "total_models": int(len(df)),
+                "total_evaluations": int(df['Evaluations'].sum()) if 'Evaluations' in df.columns else 0,
+                "evaluation_date": timestamp,
+                "evaluation_details": self.eval_metadata,
+                "export_path": str(run_output)
             },
-            'leaderboard': leaderboard_records
+            "model_results": [],
+            "summary_statistics": {}
         }
         
+        # Process each model into structured format
+        for _, row in df.iterrows():
+            model_entry = {
+                "model_info": {
+                    "name": str(row.get('Model', 'Unknown')),
+                    "full_name": str(row.get('Full_Model_Name', row.get('Model', 'Unknown'))),
+                    "provider": str(row.get('Provider', 'Unknown')),
+                    "model_size_gb": float(row.get('Model_Size_GB', 0)) if pd.notna(row.get('Model_Size_GB')) else 0.0,
+                    "parameters": str(row.get('Parameters', 'Unknown')),
+                    "type": "general"  # Could be enhanced based on model name
+                },
+                "performance_summary": {
+                    "overall_accuracy": float(row.get('Overall_Accuracy', 0)) if pd.notna(row.get('Overall_Accuracy')) else 0.0,
+                    "success_rate": float(row.get('Success_Rate', 0)) if pd.notna(row.get('Success_Rate')) else 0.0,
+                    "reliability_score": float(row.get('Reliability_Score', 0)) if pd.notna(row.get('Reliability_Score')) else 0.0,
+                    "overall_efficiency": float(row.get('Overall_Efficiency', 0)) if pd.notna(row.get('Overall_Efficiency')) else 0.0
+                },
+                "timing_metrics": {
+                    "avg_duration_seconds": float(row.get('Avg_Duration_Seconds', 0)) if pd.notna(row.get('Avg_Duration_Seconds')) else 0.0,
+                    "avg_load_time_seconds": float(row.get('Avg_Load_Time_Seconds', 0)) if pd.notna(row.get('Avg_Load_Time_Seconds')) else 0.0,
+                    "median_response_time": float(row.get('Median_Response_Time', 0)) if pd.notna(row.get('Median_Response_Time')) else 0.0,
+                    "p95_response_time": float(row.get('P95_Response_Time', 0)) if pd.notna(row.get('P95_Response_Time')) else 0.0,
+                    "response_time_std": float(row.get('Response_Time_Std', 0)) if pd.notna(row.get('Response_Time_Std')) else 0.0,
+                    "time_efficiency": float(row.get('Time_Efficiency', 0)) if pd.notna(row.get('Time_Efficiency')) else 0.0
+                },
+                "resource_usage": {
+                    "avg_memory_usage_mb": float(row.get('Avg_Memory_Usage_MB', 0)) if pd.notna(row.get('Avg_Memory_Usage_MB')) else 0.0,
+                    "memory_efficiency": float(row.get('Memory_Efficiency', 0)) if pd.notna(row.get('Memory_Efficiency')) else 0.0,
+                    "tokens_per_second": float(row.get('Tokens_Per_Sec', 0)) if pd.notna(row.get('Tokens_Per_Sec')) else None
+                },
+                "cost_analysis": {
+                    "total_cost": float(row.get('Total_Cost', 0)) if pd.notna(row.get('Total_Cost')) else 0.0,
+                    "avg_cost_per_eval": float(row.get('Avg_Cost_Per_Eval', 0)) if pd.notna(row.get('Avg_Cost_Per_Eval')) else 0.0,
+                    "cost_efficiency": float(row.get('Cost_Efficiency', 0)) if pd.notna(row.get('Cost_Efficiency')) else 0.0
+                },
+                "evaluation_stats": {
+                    "evaluations_count": int(row.get('Evaluations_Count', 0)) if pd.notna(row.get('Evaluations_Count')) else 0,
+                    "total_requests": int(row.get('Total_Requests', 0)) if pd.notna(row.get('Total_Requests')) else 0,
+                    "total_errors": int(row.get('Total_Errors', 0)) if pd.notna(row.get('Total_Errors')) else 0,
+                    "error_rate": float(row.get('Error_Rate', 0)) if pd.notna(row.get('Error_Rate')) else 0.0
+                },
+                "benchmark_results": {}
+            }
+            
+            # Add benchmark results
+            benchmark_cols = ['GSM8K', 'HUMANEVAL', 'MMLU', 'ARC', 'HELLASWAG', 'WINOGRANDE', 'TRUTHFULQA']
+            for benchmark in benchmark_cols:
+                accuracy_col = f"{benchmark}_Accuracy"
+                time_col = f"{benchmark}_Time_Sec"
+                success_col = f"{benchmark}_Success_Rate"
+                tokens_col = f"{benchmark}_Tokens_Per_Sec"
+                
+                model_entry["benchmark_results"][benchmark] = {
+                    "accuracy": float(row.get(accuracy_col, 0)) if pd.notna(row.get(accuracy_col)) else None,
+                    "time_seconds": float(row.get(time_col, 0)) if pd.notna(row.get(time_col)) else None,
+                    "success_rate": float(row.get(success_col, 0)) if pd.notna(row.get(success_col)) else None,
+                    "tokens_per_second": float(row.get(tokens_col, 0)) if pd.notna(row.get(tokens_col)) else None
+                }
+            
+            json_data["model_results"].append(model_entry)
+        
+        # Add summary statistics
+        if not df.empty:
+            best_accuracy_idx = df['Overall_Accuracy'].idxmax() if 'Overall_Accuracy' in df.columns else 0
+            fastest_idx = df['Avg_Duration_Seconds'].idxmin() if 'Avg_Duration_Seconds' in df.columns else 0
+            most_efficient_idx = df['Overall_Efficiency'].idxmax() if 'Overall_Efficiency' in df.columns else 0
+            most_reliable_idx = df['Reliability_Score'].idxmax() if 'Reliability_Score' in df.columns else 0
+            
+            json_data["summary_statistics"] = {
+                "best_overall_accuracy": {
+                    "model": str(df.loc[best_accuracy_idx, 'Model']),
+                    "score": float(df.loc[best_accuracy_idx, 'Overall_Accuracy']) if 'Overall_Accuracy' in df.columns else 0.0
+                },
+                "fastest_model": {
+                    "model": str(df.loc[fastest_idx, 'Model']),
+                    "avg_time": float(df.loc[fastest_idx, 'Avg_Duration_Seconds']) if 'Avg_Duration_Seconds' in df.columns else 0.0
+                },
+                "most_efficient": {
+                    "model": str(df.loc[most_efficient_idx, 'Model']),
+                    "efficiency_score": float(df.loc[most_efficient_idx, 'Overall_Efficiency']) if 'Overall_Efficiency' in df.columns else 0.0
+                },
+                "most_reliable": {
+                    "model": str(df.loc[most_reliable_idx, 'Model']),
+                    "reliability_score": float(df.loc[most_reliable_idx, 'Reliability_Score']) if 'Reliability_Score' in df.columns else 0.0
+                }
+            }
+        
+        # Export beautiful structured JSON
         json_file = run_output / f"{base_name}.json"
         with open(json_file, 'w') as f:
             json.dump(json_data, f, indent=2)
         exported_files['json'] = str(json_file)
-        print(f" JSON exported: {json_file.name}")
+        print(f" ✅ Structured JSON exported: {json_file.name}")
         
-        # 3. Markdown Export (for copy-paste to AI)
-        md_file = run_output / f"{base_name}.md"
-        with open(md_file, 'w') as f:
-            f.write("# smaLLMs Small Language Model Evaluation Results\n\n")
-            f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            
-            # Include evaluation context
-            if self.eval_metadata:
-                f.write("## Evaluation Details\n\n")
-                f.write(f"- **Evaluation Type:** {self.eval_metadata.get('evaluation_type', 'Unknown')}\n")
-                f.write(f"- **Run Folder:** {self.eval_metadata.get('run_folder', 'Unknown')}\n")
-                f.write(f"- **Date:** {self.eval_metadata.get('date_folder', 'Unknown')}\n")
-                f.write(f"- **Total Cost:** ${self.eval_metadata.get('total_cost', 0):.4f}\n")
-                f.write(f"- **Duration:** {self.eval_metadata.get('total_duration', 0):.1f} minutes\n")
-                f.write(f"- **Export Path:** {run_output}\n\n")
-            
-            f.write(f"**Models Evaluated:** {len(df)}\n")
-            f.write(f"**Total Evaluations:** {df['Evaluations'].sum()}\n\n")
-            
-            f.write("## Leaderboard\n\n")
-            f.write(df.to_markdown(index=True))
-            
-            f.write("\n\n## Key Insights\n\n")
-            
-            # Add some analysis
-            best_model = df.iloc[0]
-            f.write(f"- **Best Overall Model:** {best_model['Model']} ({best_model['Overall_Accuracy']:.3f} accuracy)\n")
-            f.write(f"- **Most Cost Efficient:** {df.loc[df['Cost_Efficiency'].idxmax(), 'Model']}\n")
-            f.write(f"- **Highest Success Rate:** {df.loc[df['Success_Rate'].idxmax(), 'Model']}\n")
-            
-            # Benchmark analysis
-            benchmark_cols = [col for col in df.columns if col.isupper() and len(col) <= 10]
-            for benchmark in benchmark_cols:
-                if benchmark in df.columns:
-                    best_in_benchmark = df.loc[df[benchmark].idxmax()]
-                    f.write(f"- **Best {benchmark}:** {best_in_benchmark['Model']} ({best_in_benchmark[benchmark]:.3f})\n")
-            
-            f.write("\n## Evaluation Context\n\n")
-            if self.eval_metadata:
-                eval_type = self.eval_metadata.get('evaluation_type', 'Unknown')
-                f.write(f"This evaluation used the **{eval_type}** preset ")
-                if 'Lightning' in eval_type:
-                    f.write("(quick 2-minute demo with 3 models, 10 samples each)")
-                elif 'Quick' in eval_type:
-                    f.write("(5-minute benchmark with 5 models, 25 samples each)")
-                elif 'Standard' in eval_type:
-                    f.write("(15-minute evaluation with 8 models, 50 samples each)")
-                elif 'Comprehensive' in eval_type:
-                    f.write("(45-minute thorough test with 12 models, 100 samples each)")
-                else:
-                    f.write("(custom configuration)")
-                f.write(".\n\n")
-                
-                f.write(f"Results are organized in: `{run_output}`\n\n")
-            
-            f.write("## Notes\n\n")
-            f.write("- Overall_Accuracy: Average performance across all successful evaluations\n")
-            f.write("- Success_Rate: Percentage of evaluations that completed successfully\n")
-            f.write("- Cost_Efficiency: Success rate per dollar spent\n")
-            f.write("- Duration in seconds per evaluation\n")
-        
-        exported_files['markdown'] = str(md_file)
-        print(f" Markdown exported: {md_file.name}")
         
         # 4. Simple HTML Export (for quick viewing)
         html_file = run_output / f"{base_name}.html"
@@ -524,9 +534,8 @@ class SimpleResultsExporter:
     
     <h2>Export Files</h2>
     <ul>
-        <li> <strong>CSV:</strong> Import into Excel or Google Sheets</li>
-        <li> <strong>JSON:</strong> Use in web applications and APIs</li>
-        <li> <strong>Markdown:</strong> Copy-paste to AI assistants for analysis</li>
+        <li> <strong>CSV:</strong> Import into Excel or Google Sheets for detailed analysis</li>
+        <li> <strong>JSON:</strong> Structured data for web applications, APIs, and programming</li>
     </ul>
     
     <h2>File Organization</h2>
@@ -624,9 +633,8 @@ def main():
         
         print(f"\n Next Steps:")
         print("1. Open the HTML file to view results in browser")
-        print("2. Copy the JSON file to your website project")
-        print("3. Use the Markdown file with AI assistants for analysis")
-        print("4. Import CSV into Excel for detailed analysis")
+        print("2. Copy the JSON file to your website project or for analysis")
+        print("3. Import CSV into Excel for detailed analysis")
 
 if __name__ == "__main__":
     main()
