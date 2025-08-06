@@ -1,35 +1,35 @@
-# 🚀 smaLLMs - AI Studio-Level Benchmarking Platform with Marathon Mode
+# smaLLMs - AI Studio-Level Benchmarking Platform with Marathon Mode
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Local & Cloud](https://img.shields.io/badge/🔄-Ollama%20%2B%20LM%20Studio%20%2B%20Cloud-blue)](https://ollama.ai/)
-[![Marathon Mode](https://img.shields.io/badge/🏃‍♂️-Marathon%20Mode-purple)](https://github.com/mmdmcy/smaLLMs)
-[![OpenAI-Level](https://img.shields.io/badge/🏆-16%20AI%20Studio%20Benchmarks-red)](https://openai.com/)
+[![Local & Cloud](https://img.shields.io/badge/-Ollama%20%2B%20LM%20Studio%20%2B%20Cloud-blue)](https://ollama.ai/)
+[![Marathon Mode](https://img.shields.io/badge/Marathon%20Mode-purple)](https://github.com/mmdmcy/smaLLMs)
+[![OpenAI-Level](https://img.shields.io/badge/-16%20AI%20Studio%20Benchmarks-red)](https://openai.com/)
 
-> **�‍♂️ Marathon Mode: Run overnight evaluation of ALL your local models with ALL 16 benchmarks**  
+> **Marathon Mode: Run overnight evaluation of ALL your local models with ALL 16 benchmarks**  
 > Supporting Ollama, LM Studio, and Cloud APIs with comprehensive AI studio-level evaluation!
 
 ![smaLLMs Demo](https://img.shields.io/badge/Status-Production%20Ready-brightgreen) ![Benchmarks](https://img.shields.io/badge/Benchmarks-16-orange) ![Models](https://img.shields.io/badge/Local%20Models-23%2B-green)
 
-## 🎯 What is smaLLMs?
+## What is smaLLMs?
 
 **smaLLMs** is the most comprehensive local and cloud LLM evaluation platform, supporting **ALL 16 benchmarks used by OpenAI, Anthropic, Google DeepMind, and xAI**. Evaluate your Ollama and LM Studio models with the same rigor as top AI labs.
 
-### 🌟 Key Features
+### Key Features
 
-- **🏃‍♂️ Marathon Mode**: Overnight evaluation of ALL local models with ALL benchmarks
-- **🏆 16 AI Studio Benchmarks**: Complete suite including AIME, GPQA, Codeforces, HealthBench
-- **🔄 Local + Cloud**: Seamlessly works with Ollama (15 models), LM Studio (8 models), and cloud APIs
-- **🚀 One Command**: `python smaLLMs.py` - everything integrated into a single file
-- **💰 Cost-Optimized**: Smart sampling and rate limiting for efficient evaluation
-- **📊 Beautiful Interface**: Real-time progress with color-coded results
-- **🎯 Production-Ready**: Battle-tested evaluation methodology
-- **📁 Organized Results**: Date-based structure with clean exports
-- **⚡ Windows Compatible**: Full Unicode support and robust error handling
+- **Marathon Mode**: Overnight evaluation of ALL local models with ALL benchmarks
+- **16 AI Studio Benchmarks**: Complete suite including AIME, GPQA, Codeforces, HealthBench
+- **Local + Cloud**: Seamlessly works with Ollama (15 models), LM Studio (8 models), and cloud APIs
+- **One Command**: `python smaLLMs.py` - everything integrated into a single file
+- **Cost-Optimized**: Smart sampling and rate limiting for efficient evaluation
+- **Beautiful Interface**: Real-time progress with color-coded results
+- **Production-Ready**: Battle-tested evaluation methodology
+- **Organized Results**: Date-based structure with clean exports
+- **Windows Compatible**: Full Unicode support and robust error handling
 
-## 🔥 NEW: Marathon Mode + 16 AI Studio Benchmarks
+## NEW: Marathon Mode + 16 AI Studio Benchmarks
 
-### 🏃‍♂️ **Marathon Mode**
+### **Marathon Mode**
 Run overnight comprehensive evaluation of ALL your models:
 - **Auto-Discovery**: Finds all 23+ local models (Ollama + LM Studio)
 - **Smart Selection**: Choose specific models or run ALL discovered models
@@ -38,7 +38,7 @@ Run overnight comprehensive evaluation of ALL your models:
 - **Organized Results**: Clean date/time-based result organization
 - **Windows Compatible**: Full Unicode support and robust timeout handling
 
-### 🏆 **16 AI Studio Benchmarks**
+### **16 AI Studio Benchmarks**
 Complete benchmark suite matching major AI companies:
 
 #### **Competition & Expert Level**
@@ -63,7 +63,7 @@ Complete benchmark suite matching major AI companies:
 - **OpenBookQA**: Multi-step reasoning with facts
 - **PIQA**: Physical interaction question answering
 
-### 🎯 **18 Benchmark Suites Available**
+### **18 Benchmark Suites Available**
 - **Individual Benchmarks**: Any single benchmark (16 options)
 - **OpenAI Suite**: Complete o3/o4 benchmark set  
 - **Competition Suite**: AIME + Codeforces + MATH
@@ -72,9 +72,9 @@ Complete benchmark suite matching major AI companies:
 - **Reasoning Suite**: ARC + HellaSwag + WinoGrande
 - **Comprehensive Suite**: Best 8-benchmark coverage
 
-## 🔥 Confirmed Working Local Models (23+)
+## Confirmed Working Local Models (23+)
 
-### � **Ollama Models (15 discovered)**
+### **Ollama Models (15 discovered)**
 - **llama3.2** - Meta's latest compact models
 - **qwen2.5** - Alibaba's optimized instruction models  
 - **qwen2.5-coder** - Specialized coding variants
@@ -84,17 +84,17 @@ Complete benchmark suite matching major AI companies:
 - **liquid** - High-performance compact models
 - **And 8+ more automatically discovered**
 
-### 🎯 **LM Studio Models (8 discovered)**  
+### **LM Studio Models (8 discovered)**  
 - **Meta Llama variants** - Multiple sizes and versions
 - **Qwen2.5 series** - Instruction and coder variants
 - **Google Gemma models** - Various parameter sizes
 - **Granite models** - IBM's latest offerings
 - **DeepSeek variants** - Reasoning and general models
 
-### ☁️ **Cloud Models (HuggingFace)**
+### **Cloud Models (HuggingFace)**
 All models from the original cloud configuration still supported for comparison.
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### **Core Technologies**
 - **Python 3.8+**: Modern async/await patterns for concurrent evaluation
@@ -121,7 +121,7 @@ All models from the original cloud configuration still supported for comparison.
 - **Result Aggregation**: Statistical analysis and ranking
 - **Cost Estimation**: Real-time API cost tracking
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. **Installation**
 ```bash
@@ -155,11 +155,11 @@ python smaLLMs.py
 ```
 
 **Marathon Mode Options:**
-- **🔄 Local**: Auto-discover and evaluate all Ollama + LM Studio models
-- **☁️ Cloud**: Evaluate HuggingFace models (requires config)
-- **📊 Choose Models**: Select specific models from 23+ discovered
-- **� Choose Benchmarks**: Pick from 18 benchmark suite options
-- **🏃‍♂️ Run ALL**: Overnight evaluation of everything!
+- **Local**: Auto-discover and evaluate all Ollama + LM Studio models
+- **Cloud**: Evaluate HuggingFace models (requires config)
+- **Choose Models**: Select specific models from 23+ discovered
+- **Choose Benchmarks**: Pick from 18 benchmark suite options
+- **Run ALL**: Overnight evaluation of everything!
 
 ### 5. **Export & Analysis**
 ```bash
@@ -167,7 +167,7 @@ python simple_exporter.py
 ```
 Generate beautiful websites, leaderboards, and analysis reports from your Marathon Mode results.
 
-## 📊 Marathon Mode Performance
+## Marathon Mode Performance
 
 | Setup | Models | Benchmarks | Samples | Duration | Use Case |
 |-------|--------|------------|---------|----------|----------|
@@ -178,18 +178,18 @@ Generate beautiful websites, leaderboards, and analysis reports from your Marath
 
 *Local model evaluation is FREE - no API costs!*
 
-## 🎯 Confirmed Working Models
+## Confirmed Working Models
 
 smaLLMs focuses on **reliability** with automatic model discovery:
 
-### **Local Models (FREE)** ✅
+### **Local Models (FREE)** 
 **Auto-discovered from Ollama & LM Studio:**
-- 📈 **15 Ollama models** - Automatically detected and configured
-- 🎯 **8 LM Studio models** - Seamlessly integrated
-- 🔄 **Progressive timeouts** - Handles slower local inference
-- 💾 **Efficient caching** - Faster repeat evaluations
+- **15 Ollama models** - Automatically detected and configured
+- **8 LM Studio models** - Seamlessly integrated
+- **Progressive timeouts** - Handles slower local inference
+- **Efficient caching** - Faster repeat evaluations
 
-### **Cloud Models (API Required)** ✅  
+### **Cloud Models (API Required)**   
 **Battle-tested HuggingFace models:**
 - `google/gemma-2-2b-it` - Google's efficient instruction model
 - `Qwen/Qwen2.5-1.5B-Instruct` - Alibaba's optimized model  
@@ -199,28 +199,28 @@ smaLLMs focuses on **reliability** with automatic model discovery:
 
 *Marathon Mode automatically discovers your available models - no manual configuration needed!*
 
-## 📁 File Structure (Streamlined)
+## File Structure (Streamlined)
 
 ```
 smaLLMs/
-├── 📄 smaLLMs.py              # 🏃‍♂️ Main Marathon Mode launcher (ALL-IN-ONE)
-├── 🧠 intelligent_evaluator.py # Smart evaluation engine
-├── 📊 simple_exporter.py      # Results export & website generation
-├── 🎨 beautiful_terminal.py   # Color terminal interface
-├── 🧪 test_everything.py      # Comprehensive test suite (15 tests)
-├── 🔍 check_local_services.py # Local model discovery utility
-├── ⚙️ config/
+├── smaLLMs.py              # Main Marathon Mode launcher (ALL-IN-ONE)
+├── intelligent_evaluator.py # Smart evaluation engine
+├── simple_exporter.py      # Results export & website generation
+├── beautiful_terminal.py   # Color terminal interface
+├── test_everything.py      # Comprehensive test suite (15 tests)
+├── check_local_services.py # Local model discovery utility
+├── config/
 │   ├── config.yaml            # Your configuration (cloud only)
 │   ├── config.example.yaml    # Example configuration
 │   └── models.yaml            # Model definitions
-├── 🔧 src/                    # Core evaluation modules
+├── src/                    # Core evaluation modules
 │   ├── models/                # Model management & discovery
 │   ├── benchmarks/            # 16 benchmark implementations
 │   ├── evaluator.py           # Evaluation orchestration
 │   ├── metrics/               # Result analysis & aggregation
 │   ├── utils/                 # Storage and utilities
 │   └── web/                   # Optional web interface
-└── 📁 smaLLMs_results/        # Marathon Mode results
+└── smaLLMs_results/        # Marathon Mode results
     └── 2025-MM-DD/            # Date-based organization
         └── run_HHMMSS/        # Time-stamped runs
             ├── individual_results/ # Raw benchmark data
@@ -230,7 +230,7 @@ smaLLMs/
 
 **Everything you need in 17 essential files - no bloat!**
 
-## 🛠️ How It Works
+## How It Works
 
 ### **1. Marathon Mode Discovery**
 ```python
@@ -257,16 +257,16 @@ benchmarks = load_benchmark_suite()  # All 16 AI studio benchmarks
 - **Export Ready**: One-click website and analysis generation
 - **Resume Capability**: Continue interrupted Marathon Mode runs
 
-## 💰 Cost Optimization & FREE Local Evaluation
+## Cost Optimization & FREE Local Evaluation
 
-### **FREE Local Models** 🎉
+### **FREE Local Models** 
 Marathon Mode with local models is **completely FREE**:
 - **No API costs** for Ollama and LM Studio models
 - **Unlimited evaluations** - run as many benchmarks as you want
 - **23+ models available** - comprehensive local model comparison
 - **Perfect for research** and experimentation
 
-### **Cost-Efficient Cloud Models** 💰
+### **Cost-Efficient Cloud Models** 
 When using cloud APIs, smaLLMs is optimized for efficiency:
 - **Smart Sampling**: Don't waste tokens on failing models
 - **Progressive Evaluation**: Start small, scale for promising models  
@@ -278,18 +278,18 @@ When using cloud APIs, smaLLMs is optimized for efficiency:
 - Standard evaluation (8 models, 4 benchmarks): ~$0.30
 - Comprehensive (15 models, 8 benchmarks): ~$1.20
 
-## 🌐 Export & Integration
+## Export & Integration
 
 ### **Marathon Mode Results Export**
 ```bash
 python simple_exporter.py
 ```
 **Generates:**
-- **📊 Beautiful Websites**: Interactive leaderboards and analysis
-- **📈 Comparison Charts**: Visual model performance comparisons
-- **📋 CSV/JSON Data**: Excel and analysis-ready formats
-- **📝 Markdown Reports**: AI assistant and documentation ready
-- **🏆 Leaderboards**: Rank your local models against benchmarks
+- **Beautiful Websites**: Interactive leaderboards and analysis
+- **Comparison Charts**: Visual model performance comparisons
+- **CSV/JSON Data**: Excel and analysis-ready formats
+- **Markdown Reports**: AI assistant and documentation ready
+- **Leaderboards**: Rank your local models against benchmarks
 
 ### **Integration Ready**
 - **REST API**: Optional web interface (via FastAPI)
@@ -297,7 +297,7 @@ python simple_exporter.py
 - **Modular Architecture**: Easy to extend with custom benchmarks
 - **Plugin System**: Add new model providers and benchmarks
 
-## 🔧 Configuration
+## Configuration
 
 ### **Local Models (No config needed!)**
 Marathon Mode automatically discovers your models:
@@ -328,7 +328,7 @@ marathon_mode:
 - **Result Organization**: Customize directory structure and naming
 - **Export Formats**: Configure output formats and destinations
 
-## 🚀 Get Started with Marathon Mode
+## Get Started with Marathon Mode
 
 ```bash
 git clone https://github.com/mmdmcy/smaLLMs.git
@@ -338,29 +338,29 @@ python smaLLMs.py
 ```
 
 **Choose your adventure:**
-1. **🔄 Local Models**: Auto-discover and evaluate all Ollama + LM Studio models (FREE!)
-2. **☁️ Cloud Models**: Add HuggingFace token and evaluate cloud models  
-3. **🏃‍♂️ Marathon Mode**: Run ALL models with ALL 16 benchmarks overnight
-4. **📊 Custom**: Pick specific models and benchmark suites
+1. **Local Models**: Auto-discover and evaluate all Ollama + LM Studio models (FREE!)
+2. **Cloud Models**: Add HuggingFace token and evaluate cloud models  
+3. **Marathon Mode**: Run ALL models with ALL 16 benchmarks overnight
+4. **Custom**: Pick specific models and benchmark suites
 
-**Join the local model revolution!** 🔥
+**Join the local model revolution!** 
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Help make smaLLMs even better:
 
-- **🧪 New Benchmarks**: Add domain-specific evaluation tasks
-- **🤖 Model Providers**: Integrate new local and cloud model platforms  
-- **📊 Visualization**: Enhance Marathon Mode result analysis
-- **� Performance**: Optimize local model inference and evaluation speed
+- **New Benchmarks**: Add domain-specific evaluation tasks
+- **Model Providers**: Integrate new local and cloud model platforms  
+- **Visualization**: Enhance Marathon Mode result analysis
+- **Performance**: Optimize local model inference and evaluation speed
 
-## 📄 License
+## License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
-## 👨‍💻 Created By
+## Created By
 
 **mmdmcy** - [GitHub](https://github.com/mmdmcy)
 
@@ -368,4 +368,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-*smaLLMs Marathon Mode - Run overnight evaluation of ALL your models with ALL benchmarks. Local is the new cloud.* 🏃‍♂️✨
+*smaLLMs Marathon Mode - Run overnight evaluation of ALL your models with ALL benchmarks. Local is the new cloud.*

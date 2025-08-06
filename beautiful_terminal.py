@@ -53,7 +53,7 @@ class BeautifulTerminal:
         elapsed = time.time() - self.start_time
         mins, secs = divmod(elapsed, 60)
         
-        print(f"\033[96m→  \033[0msmaLLMs \033[90mevaluation platform\033[0m \033[90m✕ \033[94mPython Benchmarking Suite\033[0m")
+        print(f"\033[96m→  \033[0msmaLLMs \033[90mevaluation platform\033[0m \033[90m \033[94mPython Benchmarking Suite\033[0m")
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")
         print(f"\033[90mRunning smaLLMs Evaluation @ \033[91m{current_time}\033[90m...\033[0m")
         print()

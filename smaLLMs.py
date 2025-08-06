@@ -182,7 +182,7 @@ class SmaLLMsLauncher:
                 try:
                     await self.model_manager.discover_local_models()
                 except Exception as e:
-                    print(f"{self.terminal.YELLOW}⚠️  Could not discover some local models: {e}{self.terminal.RESET}")
+                    print(f"{self.terminal.YELLOW}  Could not discover some local models: {e}{self.terminal.RESET}")
         return self.model_manager
     
     def print_welcome(self):
@@ -190,47 +190,47 @@ class SmaLLMsLauncher:
         self.terminal.clear_screen()
         print(f"""
 {self.terminal.CYAN}╔══════════════════════════════════════════════════════════════════════════════╗
-║                          {self.terminal.BOLD}🚀 smaLLMs Evaluation Platform{self.terminal.RESET}{self.terminal.CYAN}                          ║
+║                          {self.terminal.BOLD}smaLLMs Evaluation Platform{self.terminal.RESET}{self.terminal.CYAN}                          ║
 ║                     {self.terminal.GRAY}OpenAI-Level LLM Benchmarking Suite{self.terminal.RESET}{self.terminal.CYAN}                        ║
 ║                     {self.terminal.YELLOW}Now with ALL benchmarks used by top AI labs!{self.terminal.RESET}{self.terminal.CYAN}                     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝{self.terminal.RESET}
 
-{self.terminal.BOLD}🎯 Choose Your Evaluation Mode:{self.terminal.RESET}
+{self.terminal.BOLD}Choose Your Evaluation Mode:{self.terminal.RESET}
 
-{self.terminal.BOLD}🏠 LOCAL MODEL EVALUATION{self.terminal.RESET}
+{self.terminal.BOLD}LOCAL MODEL EVALUATION{self.terminal.RESET}
   {self.terminal.GREEN}local{self.terminal.RESET}    - {self.terminal.BOLD}Enter Local Mode{self.terminal.RESET}      - Evaluate your Ollama & LM Studio models
   
-{self.terminal.BOLD}☁️  CLOUD MODEL EVALUATION{self.terminal.RESET}  
+{self.terminal.BOLD}CLOUD MODEL EVALUATION{self.terminal.RESET}  
   {self.terminal.GREEN}cloud{self.terminal.RESET}    - {self.terminal.BOLD}Enter Cloud Mode{self.terminal.RESET}      - Evaluate HuggingFace models via API
 
-{self.terminal.BOLD}🔥 MARATHON MODE{self.terminal.RESET}
+{self.terminal.BOLD}MARATHON MODE{self.terminal.RESET}
   {self.terminal.RED}marathon{self.terminal.RESET}  - {self.terminal.BOLD}Overnight Mode{self.terminal.RESET}        - ALL models × ALL benchmarks (while you sleep!)
 
-{self.terminal.BOLD}🏆 NEW: OpenAI-Level Benchmarks Available:{self.terminal.RESET}
-  🧮 {self.terminal.CYAN}Competition Math:{self.terminal.RESET} AIME 2024/2025, MATH, GSM8K
-  💻 {self.terminal.CYAN}Competitive Programming:{self.terminal.RESET} Codeforces, HumanEval
-  🧠 {self.terminal.CYAN}Expert Knowledge:{self.terminal.RESET} GPQA Diamond, HLE, MMLU  
-  🏥 {self.terminal.CYAN}Specialized:{self.terminal.RESET} HealthBench, TauBench (tool use)
+{self.terminal.BOLD}NEW: OpenAI-Level Benchmarks Available:{self.terminal.RESET}
+  Competition Math: AIME 2024/2025, MATH, GSM8K
+  Competitive Programming: Codeforces, HumanEval
+  Expert Knowledge: GPQA Diamond, HLE, MMLU  
+  Specialized: HealthBench, TauBench (tool use)
 
-{self.terminal.BOLD}📊 Quick Commands:{self.terminal.RESET}
+{self.terminal.BOLD}Quick Commands:{self.terminal.RESET}
   {self.terminal.CYAN}discover{self.terminal.RESET}  - Find all local models on your system
   {self.terminal.CYAN}status{self.terminal.RESET}    - Show current results summary  
   {self.terminal.CYAN}export{self.terminal.RESET}    - Export results for website/analysis
   {self.terminal.CYAN}space{self.terminal.RESET}     - Check current disk space usage
   {self.terminal.CYAN}help{self.terminal.RESET}      - Show this menu again
 
-{self.terminal.BOLD}📁 Configuration:{self.terminal.RESET}
-  📁 {self.terminal.GRAY}config/config.yaml{self.terminal.RESET}       - Main configuration settings
-  📁 {self.terminal.GRAY}config/models.yaml{self.terminal.RESET}       - {self.terminal.YELLOW}Add your own HuggingFace models here{self.terminal.RESET}
+{self.terminal.BOLD}Configuration:{self.terminal.RESET}
+  {self.terminal.GRAY}config/config.yaml{self.terminal.RESET}       - Main configuration settings
+  {self.terminal.GRAY}config/models.yaml{self.terminal.RESET}       - {self.terminal.YELLOW}Add your own HuggingFace models here{self.terminal.RESET}
 
-{self.terminal.YELLOW}🔥 NEW: Marathon Mode - Perfect for comprehensive overnight evaluation!{self.terminal.RESET}
-{self.terminal.YELLOW}💡 Start with 'local' for interactive mode or 'marathon' for complete automation!{self.terminal.RESET}
+{self.terminal.YELLOW}NEW: Marathon Mode - Perfect for comprehensive overnight evaluation!{self.terminal.RESET}
+{self.terminal.YELLOW}Start with 'local' for interactive mode or 'marathon' for complete automation!{self.terminal.RESET}
 """)
 
     def check_disk_space(self):
         """Check and display current disk space usage."""
         import shutil
-        print(f"\n{self.terminal.BOLD}💾 Disk Space Information{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD}Disk Space Information{self.terminal.RESET}")
         
         try:
             total, used, free = shutil.disk_usage(Path.cwd())
@@ -240,17 +240,17 @@ class SmaLLMsLauncher:
             free_gb = free / (1024**3)
             used_percent = (used / total) * 100
             
-            print(f"📍 Drive: {Path.cwd().drive if hasattr(Path.cwd(), 'drive') else Path.cwd().anchor}")
-            print(f"📊 Total: {total_gb:.1f}GB")
-            print(f"🔴 Used:  {used_gb:.1f}GB ({used_percent:.1f}%)")
-            print(f"🟢 Free:  {free_gb:.1f}GB")
+            print(f"Drive: {Path.cwd().drive if hasattr(Path.cwd(), 'drive') else Path.cwd().anchor}")
+            print(f"Total: {total_gb:.1f}GB")
+            print(f"Used:  {used_gb:.1f}GB ({used_percent:.1f}%)")
+            print(f"Free:  {free_gb:.1f}GB")
                 
         except Exception as e:
-            print(f"{self.terminal.RED}❌ Could not check disk space: {e}{self.terminal.RESET}")
+            print(f"{self.terminal.RED}Could not check disk space: {e}{self.terminal.RESET}")
 
     async def run_troubleshoot(self):
         """Comprehensive troubleshooting and diagnostics."""
-        print(f"\n{self.terminal.BOLD}🔧 smaLLMs Troubleshooting & Diagnostics{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD}smaLLMs Troubleshooting & Diagnostics{self.terminal.RESET}")
         print(f"Running comprehensive system checks...\n")
         
         issues_found = 0
@@ -264,22 +264,22 @@ class SmaLLMsLauncher:
                     if response.status == 200:
                         data = await response.json()
                         models = data.get('models', [])
-                        print(f"{self.terminal.GREEN}✅ Ollama{self.terminal.RESET}: Connected - {len(models)} models available")
+                        print(f"{self.terminal.GREEN}Ollama{self.terminal.RESET}: Connected - {len(models)} models available")
                         
                         # Check for slow/large models
                         large_models = [m for m in models if any(size in m['name'].lower() for size in ['7b', '13b', '70b', 'large'])]
                         if large_models:
-                            print(f"   🐌 Large models detected: {len(large_models)} (may cause timeouts)")
+                            print(f"   Large models detected: {len(large_models)} (may cause timeouts)")
                     else:
-                        print(f"{self.terminal.RED}❌ Ollama{self.terminal.RESET}: HTTP {response.status}")
+                        print(f"{self.terminal.RED}Ollama{self.terminal.RESET}: HTTP {response.status}")
                         issues_found += 1
                         suggestions.append("Restart Ollama service")
         except asyncio.TimeoutError:
-            print(f"{self.terminal.RED}❌ Ollama{self.terminal.RESET}: Connection timeout")
+            print(f"{self.terminal.RED}Ollama{self.terminal.RESET}: Connection timeout")
             issues_found += 1
             suggestions.append("Check if Ollama is running: 'ollama serve'")
         except Exception as e:
-            print(f"{self.terminal.RED}❌ Ollama{self.terminal.RESET}: {str(e)[:50]}...")
+            print(f"{self.terminal.RED}Ollama{self.terminal.RESET}: {str(e)[:50]}...")
             issues_found += 1
             suggestions.append("Install/restart Ollama")
         
@@ -290,11 +290,11 @@ class SmaLLMsLauncher:
                     if response.status == 200:
                         data = await response.json()
                         models = data.get('data', [])
-                        print(f"{self.terminal.GREEN}✅ LM Studio{self.terminal.RESET}: Connected - {len(models)} models loaded")
+                        print(f"{self.terminal.GREEN}LM Studio{self.terminal.RESET}: Connected - {len(models)} models loaded")
                     else:
-                        print(f"{self.terminal.YELLOW}⚠️ LM Studio{self.terminal.RESET}: Available but no models loaded")
+                        print(f"{self.terminal.YELLOW}LM Studio{self.terminal.RESET}: Available but no models loaded")
         except:
-            print(f"{self.terminal.YELLOW}⚠️ LM Studio{self.terminal.RESET}: Not running (optional)")
+            print(f"{self.terminal.YELLOW}LM Studio{self.terminal.RESET}: Not running (optional)")
         
         # 3. Check system resources
         try:
@@ -302,72 +302,72 @@ class SmaLLMsLauncher:
             cpu_percent = psutil.cpu_percent(interval=1)
             memory = psutil.virtual_memory()
             
-            print(f"\n{self.terminal.BOLD}🖥️ System Resources:{self.terminal.RESET}")
+            print(f"\n{self.terminal.BOLD}System Resources:{self.terminal.RESET}")
             print(f"CPU Usage: {cpu_percent:.1f}%")
             print(f"RAM: {memory.used / (1024**3):.1f}GB / {memory.total / (1024**3):.1f}GB ({memory.percent:.1f}%)")
             
             if memory.percent > 90:
-                print(f"{self.terminal.RED}❌ Very high RAM usage!{self.terminal.RESET}")
+                print(f"{self.terminal.RED}Very high RAM usage!{self.terminal.RESET}")
                 issues_found += 1
                 suggestions.append("Close other applications or restart computer")
             elif memory.percent > 80:
-                print(f"{self.terminal.YELLOW}⚠️ High RAM usage{self.terminal.RESET}")
+                print(f"{self.terminal.YELLOW}High RAM usage{self.terminal.RESET}")
                 suggestions.append("Consider closing other applications")
             
             if memory.total / (1024**3) < 8:
-                print(f"{self.terminal.YELLOW}⚠️ Low RAM system ({memory.total / (1024**3):.1f}GB){self.terminal.RESET}")
+                print(f"{self.terminal.YELLOW}Low RAM system ({memory.total / (1024**3):.1f}GB){self.terminal.RESET}")
                 suggestions.append("Use smaller sample counts (10-25) for evaluations")
                 
         except ImportError:
-            print(f"{self.terminal.YELLOW}⚠️ Cannot check system resources (psutil not installed){self.terminal.RESET}")
+            print(f"{self.terminal.YELLOW}Cannot check system resources (psutil not installed){self.terminal.RESET}")
         
         # 4. Check disk space
         import shutil
         total, used, free = shutil.disk_usage(".")
         free_gb = free / (1024**3)
-        print(f"\n{self.terminal.BOLD}💾 Disk Space:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD}Disk Space:{self.terminal.RESET}")
         print(f"Free: {free_gb:.1f}GB")
         
         if free_gb < 2:
-            print(f"{self.terminal.RED}❌ Very low disk space!{self.terminal.RESET}")
+            print(f"{self.terminal.RED}Very low disk space!{self.terminal.RESET}")
             issues_found += 1
             suggestions.append("Free up disk space or run cleanup")
         elif free_gb < 5:
-            print(f"{self.terminal.YELLOW}⚠️ Low disk space{self.terminal.RESET}")
+            print(f"{self.terminal.YELLOW}Low disk space{self.terminal.RESET}")
             suggestions.append("Monitor disk usage during evaluations")
         
         # 5. Check configuration
-        print(f"\n{self.terminal.BOLD}⚙️ Configuration:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD}Configuration:{self.terminal.RESET}")
         timeout = self.config.get('ollama', {}).get('timeout', 300)
         retries = self.config.get('ollama', {}).get('max_retries', 4)
         print(f"Timeout: {timeout}s, Max retries: {retries}")
         
         if timeout < 180:
-            print(f"{self.terminal.YELLOW}⚠️ Short timeout may cause issues with large models{self.terminal.RESET}")
+            print(f"{self.terminal.YELLOW}Short timeout may cause issues with large models{self.terminal.RESET}")
             suggestions.append("Increase timeout in config/config.yaml (recommended: 300s)")
         
         # Summary and recommendations
-        print(f"\n{self.terminal.BOLD}📋 Diagnostic Summary:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD}Diagnostic Summary:{self.terminal.RESET}")
         if issues_found == 0:
-            print(f"{self.terminal.GREEN}✅ No major issues detected!{self.terminal.RESET}")
+            print(f"{self.terminal.GREEN}No major issues detected!{self.terminal.RESET}")
             print(f"Your system appears ready for evaluations.")
         else:
-            print(f"{self.terminal.RED}❌ {issues_found} issues found{self.terminal.RESET}")
+            print(f"{self.terminal.RED}{issues_found} issues found{self.terminal.RESET}")
         
         if suggestions:
-            print(f"\n{self.terminal.BOLD}💡 Recommendations:{self.terminal.RESET}")
+            print(f"\n{self.terminal.BOLD}Recommendations:{self.terminal.RESET}")
             for i, suggestion in enumerate(suggestions, 1):
                 print(f"  {i}. {suggestion}")
         
         # Timeout-specific guidance
-        print(f"\n{self.terminal.CYAN}💡 For timeout issues specifically:{self.terminal.RESET}")
+        print(f"\n{self.terminal.CYAN}For timeout issues specifically:{self.terminal.RESET}")
         print(f"   • Start with small evaluations (5 models, 10 samples)")
         print(f"   • Use 'lightning' or 'standard' presets instead of 'all_benchmarks'") 
         print(f"   • Try individual benchmarks (gsm8k, mmlu) before suites")
         print(f"   • Check if models are loaded: 'ollama list'")
         print(f"   • Larger models (3B+) need more time - this is normal")
         
-        print(f"\n{self.terminal.GREEN}🛠️ Quick Fixes:{self.terminal.RESET}")
+        print(f"\n{self.terminal.GREEN}Quick Fixes:{self.terminal.RESET}")
         print(f"  1. Restart Ollama: 'ollama serve'")
         print(f"  2. Check models: 'ollama list'") 
         print(f"  3. Use smaller evaluations first")
@@ -382,24 +382,24 @@ class SmaLLMsLauncher:
         self.terminal.clear_screen()
         print(f"""
 {self.terminal.CYAN}╔══════════════════════════════════════════════════════════════════════════════╗
-║                     {self.terminal.BOLD}🏠 LOCAL MODEL EVALUATION MODE{self.terminal.RESET}{self.terminal.CYAN}                            ║
+║                     {self.terminal.BOLD}LOCAL MODEL EVALUATION MODE{self.terminal.RESET}{self.terminal.CYAN}                            ║
 ║                     {self.terminal.GRAY}Evaluate your models with OpenAI-level benchmarks{self.terminal.RESET}{self.terminal.CYAN}                        ║
 ╚══════════════════════════════════════════════════════════════════════════════╝{self.terminal.RESET}
 
-{self.terminal.BOLD}🚀 Local Evaluation Options:{self.terminal.RESET}
+{self.terminal.BOLD}Local Evaluation Options:{self.terminal.RESET}
   {self.terminal.GREEN}all{self.terminal.RESET}     - {self.terminal.BOLD}All Local Models{self.terminal.RESET}      - Evaluate ALL Ollama + LM Studio models
   {self.terminal.GREEN}ollama{self.terminal.RESET}  - {self.terminal.BOLD}Ollama Only{self.terminal.RESET}           - Just your Ollama models  
   {self.terminal.GREEN}lms{self.terminal.RESET}     - {self.terminal.BOLD}LM Studio Only{self.terminal.RESET}        - Just your LM Studio models
   {self.terminal.GREEN}vision{self.terminal.RESET}  - {self.terminal.BOLD}Vision Models{self.terminal.RESET}         - All vision-capable local models
 
-{self.terminal.BOLD}🏆 Benchmark Suites Available:{self.terminal.RESET}
-  🧮 {self.terminal.CYAN}Competition Math:{self.terminal.RESET} AIME 2024/2025, MATH, GSM8K
-  💻 {self.terminal.CYAN}Competitive Programming:{self.terminal.RESET} Codeforces, HumanEval
-  🧠 {self.terminal.CYAN}Expert Knowledge:{self.terminal.RESET} GPQA Diamond, HLE, MMLU
-  🏥 {self.terminal.CYAN}Specialized:{self.terminal.RESET} HealthBench, TauBench (tool use)
-  🎯 {self.terminal.CYAN}OpenAI Suite:{self.terminal.RESET} All benchmarks used by OpenAI o3/o4
+{self.terminal.BOLD}Benchmark Suites Available:{self.terminal.RESET}
+  Competition Math: AIME 2024/2025, MATH, GSM8K
+  Competitive Programming: Codeforces, HumanEval
+  Expert Knowledge: GPQA Diamond, HLE, MMLU
+  Specialized: HealthBench, TauBench (tool use)
+  OpenAI Suite: All benchmarks used by OpenAI o3/o4
 
-{self.terminal.BOLD}📊 Local Commands:{self.terminal.RESET}
+{self.terminal.BOLD}Local Commands:{self.terminal.RESET}
   {self.terminal.CYAN}discover{self.terminal.RESET} - Find all local models on your system
   {self.terminal.CYAN}benchmarks{self.terminal.RESET} - List all available benchmarks  
   {self.terminal.CYAN}status{self.terminal.RESET}   - Show current evaluation results
@@ -408,8 +408,8 @@ class SmaLLMsLauncher:
   {self.terminal.CYAN}back{self.terminal.RESET}     - Return to main menu
   {self.terminal.CYAN}exit{self.terminal.RESET}     - Quit application
 
-{self.terminal.YELLOW}💡 NEW: Enhanced timeout handling and checkpoint/resume system!{self.terminal.RESET}
-{self.terminal.YELLOW}� If you had timeout issues, run 'troubleshoot' for fixes{self.terminal.RESET}
+{self.terminal.YELLOW} NEW: Enhanced timeout handling and checkpoint/resume system!{self.terminal.RESET}
+{self.terminal.YELLOW} If you had timeout issues, run 'troubleshoot' for fixes{self.terminal.RESET}
 """)
     
 
@@ -432,23 +432,23 @@ class SmaLLMsLauncher:
                 elif cmd in ['all', 'everything']:
                     success = await self.run_local_evaluation("all", include_vision=True)
                     if success:
-                        print(f"\n{self.terminal.CYAN}💡 Run 'status' to see results or 'export' to create website files{self.terminal.RESET}")
+                        print(f"\n{self.terminal.CYAN} Run 'status' to see results or 'export' to create website files{self.terminal.RESET}")
                 elif cmd == 'ollama':
                     success = await self.run_local_evaluation("ollama", include_vision=True)
                     if success:
-                        print(f"\n{self.terminal.CYAN}💡 Run 'status' to see results or 'export' to create website files{self.terminal.RESET}")
+                        print(f"\n{self.terminal.CYAN} Run 'status' to see results or 'export' to create website files{self.terminal.RESET}")
                 elif cmd in ['lms', 'lm_studio', 'lmstudio']:
                     success = await self.run_local_evaluation("lm_studio", include_vision=True)
                     if success:
-                        print(f"\n{self.terminal.CYAN}💡 Run 'status' to see results or 'export' to create website files{self.terminal.RESET}")
+                        print(f"\n{self.terminal.CYAN} Run 'status' to see results or 'export' to create website files{self.terminal.RESET}")
                 elif cmd == 'vision':
                     success = await self.run_local_evaluation("vision", include_vision=True)
                     if success:
-                        print(f"\n{self.terminal.CYAN}💡 Run 'status' to see results or 'export' to create website files{self.terminal.RESET}")
+                        print(f"\n{self.terminal.CYAN} Run 'status' to see results or 'export' to create website files{self.terminal.RESET}")
                 elif cmd in ['marathon', 'marathon_mode', 'overnight']:
                     success = await self.run_marathon_mode()
                     if success:
-                        print(f"\n{self.terminal.GREEN}🏆 Marathon Mode completed! Check 'status' for comprehensive results{self.terminal.RESET}")
+                        print(f"\n{self.terminal.GREEN} Marathon Mode completed! Check 'status' for comprehensive results{self.terminal.RESET}")
                 elif cmd == 'status':
                     self.show_status()
                 elif cmd == 'space':
@@ -458,17 +458,17 @@ class SmaLLMsLauncher:
                 elif cmd in ['troubleshoot', 'trouble', 'fix', 'debug']:
                     await self.run_troubleshoot()
                 else:
-                    print(f"{self.terminal.YELLOW}❓ Unknown command: {cmd}{self.terminal.RESET}")
+                    print(f"{self.terminal.YELLOW} Unknown command: {cmd}{self.terminal.RESET}")
                     print(f"Type 'discover' to find models, 'troubleshoot' to fix issues, or 'help' for options")
                     
             except KeyboardInterrupt:
                 print(f"\n{self.terminal.YELLOW}Use 'exit' to return to main menu{self.terminal.RESET}")
             except Exception as e:
-                print(f"{self.terminal.RED}❌ Error: {e}{self.terminal.RESET}")
+                print(f"{self.terminal.RED} Error: {e}{self.terminal.RESET}")
 
     async def run_marathon_mode(self):
         """Marathon Mode: Run ALL local models on ALL benchmarks - perfect for overnight runs."""
-        print(f"\n{self.terminal.RED}🔥 MARATHON MODE - Complete Evaluation Suite{self.terminal.RESET}")
+        print(f"\n{self.terminal.RED} MARATHON MODE - Complete Evaluation Suite{self.terminal.RESET}")
         print(f"This mode will automatically discover ALL your local models and run them on ALL benchmarks.")
         print(f"Perfect for overnight runs - just start it and let your laptop work while you sleep!\n")
         
@@ -478,7 +478,7 @@ class SmaLLMsLauncher:
             all_models = await model_manager.get_all_local_models()
             
             if not all_models:
-                print(f"{self.terminal.YELLOW}❌ No local models found. Make sure Ollama/LM Studio are running.{self.terminal.RESET}")
+                print(f"{self.terminal.YELLOW} No local models found. Make sure Ollama/LM Studio are running.{self.terminal.RESET}")
                 return False
             
             model_names = [m['name'] for m in all_models]
@@ -489,40 +489,40 @@ class SmaLLMsLauncher:
             total_evaluations = len(model_names) * total_benchmarks * samples_per_evaluation
             estimated_hours = total_evaluations * 0.02 / 60  # Conservative estimate
             
-            print(f"{self.terminal.BOLD}📊 Marathon Mode Configuration:{self.terminal.RESET}")
-            print(f"   🤖 Models discovered: {len(model_names)}")
-            print(f"   📋 Benchmarks: {total_benchmarks} (all OpenAI-level benchmarks)")
-            print(f"   🔢 Samples per evaluation: {samples_per_evaluation}")
-            print(f"   🧮 Total evaluations: {total_evaluations:,}")
-            print(f"   ⏱️  Estimated duration: {estimated_hours:.1f} hours")
+            print(f"{self.terminal.BOLD} Marathon Mode Configuration:{self.terminal.RESET}")
+            print(f"   Models discovered: {len(model_names)}")
+            print(f"    Benchmarks: {total_benchmarks} (all OpenAI-level benchmarks)")
+            print(f"    Samples per evaluation: {samples_per_evaluation}")
+            print(f"    Total evaluations: {total_evaluations:,}")
+            print(f"     Estimated duration: {estimated_hours:.1f} hours")
             
-            print(f"\n{self.terminal.CYAN}🎯 Models to be evaluated:{self.terminal.RESET}")
+            print(f"\n{self.terminal.CYAN} Models to be evaluated:{self.terminal.RESET}")
             for i, model in enumerate(model_names, 1):
                 provider = next((m['provider'] for m in all_models if m['name'] == model), 'unknown')
                 print(f"   {i:2d}. {model} ({provider})")
             
-            print(f"\n{self.terminal.CYAN}📋 Benchmarks to be run:{self.terminal.RESET}")
+            print(f"\n{self.terminal.CYAN} Benchmarks to be run:{self.terminal.RESET}")
             benchmarks = ['mmlu', 'gsm8k', 'math', 'humaneval', 'aime_2024', 'aime_2025', 
                          'gpqa_diamond', 'hle', 'healthbench', 'healthbench_hard', 
                          'codeforces', 'tau_retail', 'tau_general', 'arc']
             for i, bench in enumerate(benchmarks, 1):
                 print(f"   {i:2d}. {bench}")
             
-            print(f"\n{self.terminal.GREEN}✅ Marathon Mode Features:{self.terminal.RESET}")
-            print(f"   🔄 Automatic checkpoint/resume (interrupt-safe)")
-            print(f"   ⚡ Resource management (pauses between models)")
-            print(f"   📊 Continuous progress logging")
-            print(f"   💾 Results saved after each benchmark")
-            print(f"   🏆 Comprehensive final report")
+            print(f"\n{self.terminal.GREEN} Marathon Mode Features:{self.terminal.RESET}")
+            print(f"    Automatic checkpoint/resume (interrupt-safe)")
+            print(f"    Resource management (pauses between models)")
+            print(f"    Continuous progress logging")
+            print(f"    Results saved after each benchmark")
+            print(f"    Comprehensive final report")
             
             confirm = input(f"\n{self.terminal.YELLOW}Start Marathon Mode? This will run for ~{estimated_hours:.1f} hours [y/N]:{self.terminal.RESET} ").strip().lower()
             if confirm not in ['y', 'yes']:
                 print(f"{self.terminal.GREEN}Marathon Mode cancelled.{self.terminal.RESET}")
                 return False
             
-            print(f"\n{self.terminal.GREEN}🚀 Starting Marathon Mode...{self.terminal.RESET}")
-            print(f"💤 Perfect for overnight runs! You can safely interrupt and resume anytime.")
-            print(f"📁 Results are continuously saved to evaluation_sessions/")
+            print(f"\n{self.terminal.GREEN} Starting Marathon Mode...{self.terminal.RESET}")
+            print(f" Perfect for overnight runs! You can safely interrupt and resume anytime.")
+            print(f" Results are continuously saved to evaluation_sessions/")
             
             # Create marathon configuration
             config_dict = {
@@ -539,14 +539,14 @@ class SmaLLMsLauncher:
             result = await self.run_evaluation_with_display_async(config_dict)
             
             if result:
-                print(f"\n{self.terminal.GREEN}🏆 MARATHON MODE COMPLETED!{self.terminal.RESET}")
-                print(f"📊 Comprehensive evaluation of {len(model_names)} models completed")
-                print(f"💡 Run 'export' to create website files with all results")
+                print(f"\n{self.terminal.GREEN} MARATHON MODE COMPLETED!{self.terminal.RESET}")
+                print(f" Comprehensive evaluation of {len(model_names)} models completed")
+                print(f" Run 'export' to create website files with all results")
             
             return result
             
         except Exception as e:
-            print(f"{self.terminal.RED}❌ Marathon Mode failed: {e}{self.terminal.RESET}")
+            print(f"{self.terminal.RED} Marathon Mode failed: {e}{self.terminal.RESET}")
             return False
 
     # ================================  
@@ -558,11 +558,11 @@ class SmaLLMsLauncher:
         self.terminal.clear_screen()
         print(f"""
 {self.terminal.CYAN}╔══════════════════════════════════════════════════════════════════════════════╗
-║                     {self.terminal.BOLD}☁️  CLOUD MODEL EVALUATION MODE{self.terminal.RESET}{self.terminal.CYAN}                           ║
+║                     {self.terminal.BOLD}  CLOUD MODEL EVALUATION MODE{self.terminal.RESET}{self.terminal.CYAN}                           ║
 ║                     {self.terminal.GRAY}Evaluate HuggingFace models with OpenAI-level benchmarks{self.terminal.RESET}{self.terminal.CYAN}                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝{self.terminal.RESET}
 
-{self.terminal.BOLD}🚀 Cloud Evaluation Presets:{self.terminal.RESET}
+{self.terminal.BOLD} Cloud Evaluation Presets:{self.terminal.RESET}
   {self.terminal.GREEN}1{self.terminal.RESET} - {self.terminal.BOLD}Lightning Demo{self.terminal.RESET}     - 3 models, 5 samples (~1 min, ~$0.02)
   {self.terminal.GREEN}2{self.terminal.RESET} - {self.terminal.BOLD}Quick Benchmark{self.terminal.RESET}    - 5 models, 25 samples (~3 min, ~$0.05)  
   {self.terminal.GREEN}3{self.terminal.RESET} - {self.terminal.BOLD}Standard Eval{self.terminal.RESET}      - 8 models, 50 samples (~10 min, ~$0.15)
@@ -571,13 +571,13 @@ class SmaLLMsLauncher:
   {self.terminal.GREEN}6{self.terminal.RESET} - {self.terminal.BOLD}Expert Suite{self.terminal.RESET}       - GPQA + HLE + HealthBench (~30 min, ~$0.80)
   {self.terminal.GREEN}7{self.terminal.RESET} - {self.terminal.BOLD}Custom Selection{self.terminal.RESET}   - Choose your own models & benchmarks
 
-{self.terminal.BOLD}📊 Available Benchmarks:{self.terminal.RESET}
-  🧮 {self.terminal.CYAN}Math & Competition:{self.terminal.RESET} GSM8K, MATH, AIME 2024/2025
-  🧠 {self.terminal.CYAN}Knowledge & Science:{self.terminal.RESET} MMLU, GPQA Diamond, HLE
-  💻 {self.terminal.CYAN}Code & Programming:{self.terminal.RESET} HumanEval, Codeforces  
-  🏥 {self.terminal.CYAN}Specialized:{self.terminal.RESET} HealthBench, TauBench (tool use)
+{self.terminal.BOLD} Available Benchmarks:{self.terminal.RESET}
+   {self.terminal.CYAN}Math & Competition:{self.terminal.RESET} GSM8K, MATH, AIME 2024/2025
+   {self.terminal.CYAN}Knowledge & Science:{self.terminal.RESET} MMLU, GPQA Diamond, HLE
+   {self.terminal.CYAN}Code & Programming:{self.terminal.RESET} HumanEval, Codeforces  
+   {self.terminal.CYAN}Specialized:{self.terminal.RESET} HealthBench, TauBench (tool use)
 
-{self.terminal.BOLD}📊 Cloud Commands:{self.terminal.RESET}
+{self.terminal.BOLD} Cloud Commands:{self.terminal.RESET}
   {self.terminal.CYAN}models{self.terminal.RESET}   - Show available HuggingFace models
   {self.terminal.CYAN}benchmarks{self.terminal.RESET} - List all available benchmarks
   {self.terminal.CYAN}status{self.terminal.RESET}   - Show current evaluation results
@@ -585,13 +585,13 @@ class SmaLLMsLauncher:
   {self.terminal.CYAN}back{self.terminal.RESET}     - Return to main menu
   {self.terminal.CYAN}exit{self.terminal.RESET}     - Quit application
 
-{self.terminal.BOLD}💰 Cost Information:{self.terminal.RESET}
+{self.terminal.BOLD} Cost Information:{self.terminal.RESET}
   • Lightning Demo: ~$0.02 (perfect for testing)
   • OpenAI-Level: ~$1.50 (matches OpenAI's evaluation rigor)
   • Competition Suite: ~$1.00 (AIME, Codeforces, MATH like top labs)
 
-{self.terminal.YELLOW}💡 Now supporting ALL benchmarks used by OpenAI, Anthropic, Google DeepMind!{self.terminal.RESET}
-{self.terminal.YELLOW}🔑 Make sure your HuggingFace token is set in config/config.yaml{self.terminal.RESET}
+{self.terminal.YELLOW} Now supporting ALL benchmarks used by OpenAI, Anthropic, Google DeepMind!{self.terminal.RESET}
+{self.terminal.YELLOW} Make sure your HuggingFace token is set in config/config.yaml{self.terminal.RESET}
 """)
     
 
@@ -631,7 +631,7 @@ class SmaLLMsLauncher:
                         config_dict['preset'] = 'custom'
                         success = self.run_evaluation_with_display(config_dict)
                         if success:
-                            print(f"\n{self.terminal.CYAN}💡 Run 'export' to create website files{self.terminal.RESET}")
+                            print(f"\n{self.terminal.CYAN} Run 'export' to create website files{self.terminal.RESET}")
                 elif cmd.lower() == 'benchmarks':
                     self.show_available_benchmarks()
                 elif cmd.lower() == 'models':
@@ -641,20 +641,20 @@ class SmaLLMsLauncher:
                 elif cmd.lower() == 'status':
                     self.show_status()
                 else:
-                    print(f"{self.terminal.YELLOW}❓ Unknown command: {cmd}{self.terminal.RESET}")
+                    print(f"{self.terminal.YELLOW} Unknown command: {cmd}{self.terminal.RESET}")
                     print(f"Type 'help' for options or try presets 1-5")
                     
             except KeyboardInterrupt:
                 print(f"\n{self.terminal.YELLOW}Use 'exit' to return to main menu{self.terminal.RESET}")
             except Exception as e:
-                print(f"{self.terminal.RED}❌ Error: {e}{self.terminal.RESET}")
+                print(f"{self.terminal.RED} Error: {e}{self.terminal.RESET}")
 
     def run_cloud_preset(self, preset_name: str):
         """Run a cloud evaluation preset with enhanced benchmark support."""
         try:
             config = self.get_preset_config(preset_name)
             if not config:
-                print(f"{self.terminal.RED}❌ Preset '{preset_name}' not found{self.terminal.RESET}")
+                print(f"{self.terminal.RED} Preset '{preset_name}' not found{self.terminal.RESET}")
                 return
                 
             config_dict = {
@@ -665,33 +665,33 @@ class SmaLLMsLauncher:
                 'preset': preset_name
             }
             
-            print(f"\n{self.terminal.BOLD}🚀 Starting {config['name']}{self.terminal.RESET}")
-            print(f"📊 {config['description']}")
-            print(f"🔢 Models: {len(config['models'])}")
-            print(f"📈 Samples: {config['samples']}")
-            print(f"🎯 Benchmarks: {config.get('benchmark', 'gsm8k')}")
+            print(f"\n{self.terminal.BOLD} Starting {config['name']}{self.terminal.RESET}")
+            print(f" {config['description']}")
+            print(f" Models: {len(config['models'])}")
+            print(f" Samples: {config['samples']}")
+            print(f" Benchmarks: {config.get('benchmark', 'gsm8k')}")
             
             # Show estimated time and cost
             est_time_mins = len(config['models']) * config['samples'] * 0.05  # rough estimate
             est_cost = len(config['models']) * config['samples'] * 0.001  # rough estimate
-            print(f"⏱️ Estimated time: ~{est_time_mins:.0f} minutes")
-            print(f"💰 Estimated cost: ~${est_cost:.2f}")
+            print(f" Estimated time: ~{est_time_mins:.0f} minutes")
+            print(f" Estimated cost: ~${est_cost:.2f}")
             
             confirm = input(f"\n{self.terminal.CYAN}Continue with this evaluation? [Y/n]:{self.terminal.RESET} ").strip().lower()
             if confirm in ['', 'y', 'yes']:
                 success = self.run_evaluation_with_display(config_dict)
                 if success:
-                    print(f"\n{self.terminal.GREEN}✅ {config['name']} completed successfully!{self.terminal.RESET}")
-                    print(f"{self.terminal.CYAN}💡 Run 'export' to create website files{self.terminal.RESET}")
+                    print(f"\n{self.terminal.GREEN} {config['name']} completed successfully!{self.terminal.RESET}")
+                    print(f"{self.terminal.CYAN} Run 'export' to create website files{self.terminal.RESET}")
             else:
                 print(f"{self.terminal.YELLOW}Evaluation cancelled{self.terminal.RESET}")
                 
         except Exception as e:
-            print(f"{self.terminal.RED}❌ Preset evaluation failed: {e}{self.terminal.RESET}")
+            print(f"{self.terminal.RED} Preset evaluation failed: {e}{self.terminal.RESET}")
 
     def show_available_benchmarks(self):
         """Show all available benchmarks with descriptions."""
-        print(f"\n{self.terminal.BOLD}📊 Available Benchmarks (OpenAI-Level Suite){self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Available Benchmarks (OpenAI-Level Suite){self.terminal.RESET}")
         
         benchmarks = {
             "Core Academic": {
@@ -725,16 +725,16 @@ class SmaLLMsLauncher:
         for category, bench_dict in benchmarks.items():
             print(f"\n{self.terminal.BOLD}{category}:{self.terminal.RESET}")
             for bench_key, description in bench_dict.items():
-                difficulty_icon = "🏆" if "expert" in description.lower() or "competition" in description.lower() else "📚"
+                difficulty_icon = "" if "expert" in description.lower() or "competition" in description.lower() else ""
                 print(f"  {difficulty_icon} {self.terminal.GREEN}{bench_key:<20}{self.terminal.RESET} - {description}")
         
-        print(f"\n{self.terminal.YELLOW}💡 OpenAI Suite matches the evaluation rigor of o3/o4 models{self.terminal.RESET}")
-        print(f"{self.terminal.YELLOW}🎯 Competition Suite focuses on mathematical and programming challenges{self.terminal.RESET}")
-        print(f"{self.terminal.YELLOW}🧠 Expert Suite tests advanced domain knowledge{self.terminal.RESET}")
+        print(f"\n{self.terminal.YELLOW} OpenAI Suite matches the evaluation rigor of o3/o4 models{self.terminal.RESET}")
+        print(f"{self.terminal.YELLOW} Competition Suite focuses on mathematical and programming challenges{self.terminal.RESET}")
+        print(f"{self.terminal.YELLOW} Expert Suite tests advanced domain knowledge{self.terminal.RESET}")
 
     def show_available_cloud_models(self):
         """Show available cloud models from external config."""
-        print(f"\n{self.terminal.BOLD}☁️  Available HuggingFace Models{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD}  Available HuggingFace Models{self.terminal.RESET}")
         
         external_models = self.config.get('external_models', {})
         huggingface_models = external_models.get('huggingface_models', {})
@@ -753,40 +753,40 @@ class SmaLLMsLauncher:
 
     def check_cloud_config(self):
         """Check HuggingFace API configuration."""
-        print(f"\n{self.terminal.BOLD}🔧 Cloud Configuration Status{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Cloud Configuration Status{self.terminal.RESET}")
         
         hf_config = self.config.get('huggingface', {})
         token = hf_config.get('token', '')
         
         if token and token != 'YOUR_HF_TOKEN_HERE':
-            print(f"{self.terminal.GREEN}✅ HuggingFace token configured{self.terminal.RESET}")
+            print(f"{self.terminal.GREEN} HuggingFace token configured{self.terminal.RESET}")
         else:
-            print(f"{self.terminal.RED}❌ HuggingFace token not configured{self.terminal.RESET}")
+            print(f"{self.terminal.RED} HuggingFace token not configured{self.terminal.RESET}")
             print(f"   Edit config/config.yaml and add your token from https://huggingface.co/settings/tokens")
             
         pro_features = hf_config.get('use_pro_features', False)
-        print(f"🎭 Pro features: {'Enabled' if pro_features else 'Disabled'}")
+        print(f" Pro features: {'Enabled' if pro_features else 'Disabled'}")
         
         # Check model configuration
         external_models = self.config.get('external_models', {})
         if external_models:
             model_count = sum(len(models) for models in external_models.get('huggingface_models', {}).values() if isinstance(models, list))
-            print(f"📊 Configured models: {model_count}")
+            print(f" Configured models: {model_count}")
         else:
-            print(f"{self.terminal.YELLOW}⚠️  No external models configured in config/models.yaml{self.terminal.RESET}")
+            print(f"{self.terminal.YELLOW}  No external models configured in config/models.yaml{self.terminal.RESET}")
 
     async def interactive_cloud_model_selection(self) -> Dict[str, Any]:
         """Interactive cloud model selection."""
-        print(f"\n{self.terminal.BOLD}🎯 Custom Cloud Evaluation Setup{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Custom Cloud Evaluation Setup{self.terminal.RESET}")
         
         # Get available cloud models
         cloud_models = self.get_cloud_models_list()
         
         if not cloud_models:
-            print(f"{self.terminal.RED}❌ No cloud models available. Check config/models.yaml{self.terminal.RESET}")
+            print(f"{self.terminal.RED} No cloud models available. Check config/models.yaml{self.terminal.RESET}")
             return {}
             
-        print(f"\n{self.terminal.BOLD}📋 Model Selection Options:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Model Selection Options:{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}a{self.terminal.RESET} - All available models ({len(cloud_models)} models)")
         print(f"  {self.terminal.GREEN}c{self.terminal.RESET} - Choose specific models manually")
         
@@ -795,7 +795,7 @@ class SmaLLMsLauncher:
             
             if choice == 'a':
                 models = cloud_models
-                print(f"✓ Selected all {len(models)} available cloud models")
+                print(f" Selected all {len(models)} available cloud models")
                 break
             elif choice == 'c':
                 models = await self._manual_model_selection(cloud_models)
@@ -839,7 +839,7 @@ class SmaLLMsLauncher:
 
     def _get_cloud_sample_count_interactive(self) -> int:
         """Get sample count for cloud evaluation with cost estimates."""
-        print(f"\n{self.terminal.BOLD}📊 Sample Count (cloud evaluation with cost estimates):{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Sample Count (cloud evaluation with cost estimates):{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}1{self.terminal.RESET} - Lightning: 5 samples (~$0.005 per model) {self.terminal.GRAY}Fast test{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}2{self.terminal.RESET} - Quick Test: 10 samples (~$0.01 per model) {self.terminal.GRAY}Basic validation{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}3{self.terminal.RESET} - Light Eval: 25 samples (~$0.03 per model) {self.terminal.GRAY}Good estimate{self.terminal.RESET}")
@@ -848,7 +848,7 @@ class SmaLLMsLauncher:
         print(f"  {self.terminal.GREEN}6{self.terminal.RESET} - OpenAI-level: 500+ samples (~$0.50+ per model) {self.terminal.GRAY}Publication-ready{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}7{self.terminal.RESET} - Custom amount")
         
-        print(f"\n{self.terminal.YELLOW}💡 For OpenAI-level benchmarks (AIME, GPQA), recommend 100+ samples{self.terminal.RESET}")
+        print(f"\n{self.terminal.YELLOW} For OpenAI-level benchmarks (AIME, GPQA), recommend 100+ samples{self.terminal.RESET}")
         
         while True:
             choice = input(f"\n{self.terminal.CYAN}Select sample count [1-7]:{self.terminal.RESET} ").strip()
@@ -943,7 +943,7 @@ class SmaLLMsLauncher:
     
     async def discover_local_models_interactive(self):
         """Interactive local model discovery and display."""
-        print(f"\n{self.terminal.BOLD}🔍 Discovering Local Models...{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Discovering Local Models...{self.terminal.RESET}")
         
         try:
             model_manager = await self.init_model_manager()
@@ -952,18 +952,18 @@ class SmaLLMsLauncher:
             total_models = sum(len(models) for models in discovered.values())
             
             if total_models == 0:
-                print(f"{self.terminal.YELLOW}❌ No local models found{self.terminal.RESET}")
+                print(f"{self.terminal.YELLOW} No local models found{self.terminal.RESET}")
                 print("Make sure Ollama and/or LM Studio are running with models loaded")
                 return
             
-            print(f"\n{self.terminal.GREEN}✅ Found {total_models} local models:{self.terminal.RESET}\n")
+            print(f"\n{self.terminal.GREEN} Found {total_models} local models:{self.terminal.RESET}\n")
             
             # Display by provider
             for provider, models in discovered.items():
                 if models:
                     print(f"{self.terminal.BOLD}{provider.upper()}:{self.terminal.RESET}")
                     for model in models:
-                        vision_icon = "👁️" if model.get('supports_vision', False) else "💬"
+                        vision_icon = "" if model.get('supports_vision', False) else ""
                         size_info = f"({model.get('size_gb', 0):.1f}GB)" if model.get('size_gb', 0) > 0 else ""
                         print(f"  {vision_icon} {model['name']} {size_info}")
                     print()
@@ -973,23 +973,23 @@ class SmaLLMsLauncher:
             vision_models = [m for models in discovered.values() for m in models if m.get('supports_vision', False)]
             
             print(f"{self.terminal.CYAN}Summary:{self.terminal.RESET}")
-            print(f"  💬 Text models: {len(text_models)}")
-            print(f"  👁️ Vision models: {len(vision_models)}")
-            print(f"  📊 Total: {total_models}")
+            print(f"   Text models: {len(text_models)}")
+            print(f"   Vision models: {len(vision_models)}")
+            print(f"   Total: {total_models}")
             
         except Exception as e:
-            print(f"{self.terminal.RED}❌ Discovery failed: {e}{self.terminal.RESET}")
+            print(f"{self.terminal.RED} Discovery failed: {e}{self.terminal.RESET}")
     
     async def run_local_evaluation(self, provider_filter: str = "all", include_vision: bool = True):
         """Run evaluation on local models."""
-        print(f"\n{self.terminal.BOLD}🚀 Starting Local Model Evaluation{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Starting Local Model Evaluation{self.terminal.RESET}")
         
         try:
             model_manager = await self.init_model_manager()
             all_models = await model_manager.get_all_local_models()
             
             if not all_models:
-                print(f"{self.terminal.YELLOW}❌ No local models found. Run 'discover' first.{self.terminal.RESET}")
+                print(f"{self.terminal.YELLOW} No local models found. Run 'discover' first.{self.terminal.RESET}")
                 return False
             
             # Filter models by provider
@@ -1006,7 +1006,7 @@ class SmaLLMsLauncher:
                 models = [m for m in models if not m.get('supports_vision', False)]
             
             if not models:
-                print(f"{self.terminal.YELLOW}❌ No models match the filter criteria{self.terminal.RESET}")
+                print(f"{self.terminal.YELLOW} No models match the filter criteria{self.terminal.RESET}")
                 return False
             
             print(f"Found {len(models)} models to evaluate")
@@ -1017,7 +1017,7 @@ class SmaLLMsLauncher:
             
             # Handle marathon mode - auto-configure for maximum coverage
             if benchmark == 'marathon_mode':
-                print(f"\n{self.terminal.RED}🔥 MARATHON MODE ACTIVATED!{self.terminal.RESET}")
+                print(f"\n{self.terminal.RED} MARATHON MODE ACTIVATED!{self.terminal.RESET}")
                 print(f"This will run ALL {len(models)} local models on ALL benchmarks with 50 samples each.")
                 
                 # Calculate total evaluations
@@ -1025,19 +1025,19 @@ class SmaLLMsLauncher:
                 total_evaluations = len(models) * total_benchmarks * 50
                 estimated_hours = total_evaluations * 0.02 / 60  # 1.2 seconds per evaluation
                 
-                print(f"\n{self.terminal.YELLOW}📊 Marathon Mode Statistics:{self.terminal.RESET}")
+                print(f"\n{self.terminal.YELLOW} Marathon Mode Statistics:{self.terminal.RESET}")
                 print(f"   • Models: {len(models)}")
                 print(f"   • Benchmarks: {total_benchmarks} (all individual benchmarks)")
                 print(f"   • Samples per evaluation: 50")
                 print(f"   • Total evaluations: {total_evaluations:,}")
                 print(f"   • Estimated duration: {estimated_hours:.1f} hours")
                 
-                print(f"\n{self.terminal.CYAN}🎯 Marathon Mode Features:{self.terminal.RESET}")
-                print(f"   ✅ Auto-discovery of all local models")
-                print(f"   ✅ Automatic checkpoint/resume if interrupted")
-                print(f"   ✅ Resource management (pauses between models)")
-                print(f"   ✅ Detailed progress logging")
-                print(f"   ✅ Final comprehensive report with all results")
+                print(f"\n{self.terminal.CYAN} Marathon Mode Features:{self.terminal.RESET}")
+                print(f"    Auto-discovery of all local models")
+                print(f"    Automatic checkpoint/resume if interrupted")
+                print(f"    Resource management (pauses between models)")
+                print(f"    Detailed progress logging")
+                print(f"    Final comprehensive report with all results")
                 
                 print(f"\n{self.terminal.BOLD}Perfect for overnight runs - just start it and let it work!{self.terminal.RESET}")
                 
@@ -1050,9 +1050,9 @@ class SmaLLMsLauncher:
                 samples = 50  # Good balance for overnight run
                 benchmark = 'all_benchmarks'  # All individual benchmarks
                 
-                print(f"\n{self.terminal.GREEN}🚀 Starting Marathon Mode evaluation...{self.terminal.RESET}")
-                print(f"💤 This will take approximately {estimated_hours:.1f} hours. Perfect for overnight!")
-                print(f"📊 Progress will be saved continuously - you can interrupt and resume anytime.")
+                print(f"\n{self.terminal.GREEN} Starting Marathon Mode evaluation...{self.terminal.RESET}")
+                print(f" This will take approximately {estimated_hours:.1f} hours. Perfect for overnight!")
+                print(f" Progress will be saved continuously - you can interrupt and resume anytime.")
             
             # Convert to model names for evaluation
             model_names = [m['name'] for m in models]
@@ -1071,12 +1071,12 @@ class SmaLLMsLauncher:
             return result
             
         except Exception as e:
-            print(f"{self.terminal.RED}❌ Local evaluation failed: {e}{self.terminal.RESET}")
+            print(f"{self.terminal.RED} Local evaluation failed: {e}{self.terminal.RESET}")
             return False
     
     def _get_sample_count_interactive(self) -> int:
         """Get sample count interactively with timing estimates."""
-        print(f"\n{self.terminal.BOLD}📊 Sample Count (local models with timing estimates):{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Sample Count (local models with timing estimates):{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}1{self.terminal.RESET} - Lightning: 3 samples (~15 sec per model) {self.terminal.GRAY}Ultra-fast test{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}2{self.terminal.RESET} - Quick Test: 5 samples (~30 sec per model) {self.terminal.GRAY}Basic check{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}3{self.terminal.RESET} - Light Eval: 10 samples (~1 min per model) {self.terminal.GRAY}Good estimate{self.terminal.RESET}")
@@ -1085,7 +1085,7 @@ class SmaLLMsLauncher:
         print(f"  {self.terminal.GREEN}6{self.terminal.RESET} - OpenAI-level: 100+ samples (~12+ min per model) {self.terminal.GRAY}Publication-ready{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}7{self.terminal.RESET} - Custom amount")
         
-        print(f"\n{self.terminal.YELLOW}💡 For competition benchmarks (AIME, Codeforces), recommend 25+ samples{self.terminal.RESET}")
+        print(f"\n{self.terminal.YELLOW} For competition benchmarks (AIME, Codeforces), recommend 25+ samples{self.terminal.RESET}")
         
         while True:
             choice = input(f"\n{self.terminal.CYAN}Select sample count [1-7]:{self.terminal.RESET} ").strip()
@@ -1115,32 +1115,32 @@ class SmaLLMsLauncher:
     
     def _get_benchmark_interactive(self) -> str:
         """Get benchmark selection interactively with OpenAI-level options."""
-        print(f"\n{self.terminal.BOLD}📈 Benchmark Selection (OpenAI-Level Evaluation):{self.terminal.RESET}")
-        print(f"\n{self.terminal.BOLD}🚀 Standard Benchmarks:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Benchmark Selection (OpenAI-Level Evaluation):{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Standard Benchmarks:{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}1{self.terminal.RESET} - GSM8K: Math word problems")
         print(f"  {self.terminal.GREEN}2{self.terminal.RESET} - MMLU: Multiple choice knowledge")
         print(f"  {self.terminal.GREEN}3{self.terminal.RESET} - HumanEval: Code generation")
         print(f"  {self.terminal.GREEN}4{self.terminal.RESET} - MATH: Competition mathematics")
         
-        print(f"\n{self.terminal.BOLD}🏆 Competition & Expert Level:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Competition & Expert Level:{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}5{self.terminal.RESET} - AIME 2024: Math competition (like OpenAI)")
         print(f"  {self.terminal.GREEN}6{self.terminal.RESET} - AIME 2025: Latest math competition")
         print(f"  {self.terminal.GREEN}7{self.terminal.RESET} - GPQA Diamond: PhD-level science")
         print(f"  {self.terminal.GREEN}8{self.terminal.RESET} - Codeforces: Competitive programming")
         
-        print(f"\n{self.terminal.BOLD}🧠 Expert Knowledge:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Expert Knowledge:{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}9{self.terminal.RESET} - HLE: Humanity's Last Exam (expert-level)")
         print(f"  {self.terminal.GREEN}10{self.terminal.RESET} - HealthBench: Medical conversations")
         print(f"  {self.terminal.GREEN}11{self.terminal.RESET} - TauBench: Function calling & tool use")
         
-        print(f"\n{self.terminal.BOLD}📊 Evaluation Suites:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Evaluation Suites:{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}12{self.terminal.RESET} - OpenAI Suite: All benchmarks used by OpenAI")
         print(f"  {self.terminal.GREEN}13{self.terminal.RESET} - Competition Suite: AIME + Codeforces + MATH")
         print(f"  {self.terminal.GREEN}14{self.terminal.RESET} - Expert Suite: GPQA + HLE + HealthBench")
         print(f"  {self.terminal.GREEN}15{self.terminal.RESET} - Comprehensive: Best overall coverage")
         print(f"  {self.terminal.GREEN}16{self.terminal.RESET} - Legacy (GSM8K + MMLU): Original benchmarks")
         print(f"  {self.terminal.GREEN}17{self.terminal.RESET} - ALL BENCHMARKS: Every single benchmark available")
-        print(f"  {self.terminal.GREEN}18{self.terminal.RESET} - 🔥 MARATHON MODE: All models + All benchmarks (overnight run)")
+        print(f"  {self.terminal.GREEN}18{self.terminal.RESET} -  MARATHON MODE: All models + All benchmarks (overnight run)")
         
         while True:
             choice = input(f"\n{self.terminal.CYAN}Select benchmark [1-18]:{self.terminal.RESET} ").strip()
@@ -1183,7 +1183,7 @@ class SmaLLMsLauncher:
                 elif selection == 'all_benchmarks':
                     print(f"  {self.terminal.GRAY}→ ALL 14 INDIVIDUAL BENCHMARKS: MMLU, GSM8K, MATH, HumanEval, AIME 2024, AIME 2025, GPQA Diamond, GPQA Main, HLE, HealthBench, HealthBench Hard, Codeforces, TauBench Retail, TauBench General{self.terminal.RESET}")
                 elif selection == 'marathon_mode':
-                    print(f"  {self.terminal.YELLOW}🔥 MARATHON MODE: All discovered local models × All benchmarks × 50 samples{self.terminal.RESET}")
+                    print(f"  {self.terminal.YELLOW}MARATHON MODE: All discovered local models × All benchmarks × 50 samples{self.terminal.RESET}")
                     print(f"  {self.terminal.GRAY}→ Perfect for overnight runs - just start it and leave your laptop on!{self.terminal.RESET}")
                 
                 return selection
@@ -1225,11 +1225,11 @@ class SmaLLMsLauncher:
     
     async def interactive_model_selection(self) -> Dict[str, Any]:
         """Interactive model selection with batch options."""
-        print(f"\n{self.terminal.BOLD}🎯 Custom Evaluation Setup{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Custom Evaluation Setup{self.terminal.RESET}")
         
         # Model selection
         suggestions = await self.get_all_suggested_models()
-        print(f"\n{self.terminal.BOLD}📋 Model Selection Options:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Model Selection Options:{self.terminal.RESET}")
         print(f"  {self.terminal.GREEN}a{self.terminal.RESET} - All available models ({len(suggestions)} models)")
         print(f"  {self.terminal.GREEN}l{self.terminal.RESET} - Local models only (your installed models)")
         print(f"  {self.terminal.GREEN}c{self.terminal.RESET} - Choose specific models manually")
@@ -1239,7 +1239,7 @@ class SmaLLMsLauncher:
             
             if choice == 'a':
                 models = suggestions
-                print(f"✓ Selected all {len(models)} available models")
+                print(f" Selected all {len(models)} available models")
                 break
             elif choice == 'l':
                 # Get only local models
@@ -1247,7 +1247,7 @@ class SmaLLMsLauncher:
                     model_manager = await self.init_model_manager()
                     local_models = await model_manager.get_all_local_models()
                     models = [m['name'] for m in local_models if m.get('available', True)]
-                    print(f"✓ Selected {len(models)} local models")
+                    print(f" Selected {len(models)} local models")
                 except Exception as e:
                     print(f"{self.terminal.RED}Error getting local models: {e}{self.terminal.RESET}")
                     continue
@@ -1262,7 +1262,7 @@ class SmaLLMsLauncher:
             return {}
         
         # Sample count selection
-        print(f"\n{self.terminal.BOLD}📊 Sample Count Options:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Sample Count Options:{self.terminal.RESET}")
         sample_options = {
             '1': ('Quick Test', 10, '~1-2 minutes'),
             '2': ('Light Eval', 25, '~3-5 minutes'), 
@@ -1307,7 +1307,7 @@ class SmaLLMsLauncher:
             '10': ('ALL BENCHMARKS', 'all_benchmarks', 'Every single benchmark available')
         }
         
-        print(f"\n{self.terminal.BOLD}📈 Benchmark Selection:{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Benchmark Selection:{self.terminal.RESET}")
         for key, (name, code, desc) in benchmark_options.items():
             print(f"  {self.terminal.GREEN}{key}{self.terminal.RESET} - {name}: {desc}")
         
@@ -1378,7 +1378,7 @@ class SmaLLMsLauncher:
                     if inp not in models:
                         models.append(inp)
                 
-                print(f"  ✓ Selected {len(models)} models")
+                print(f"   Selected {len(models)} models")
                     
             except (ValueError, IndexError):
                 print(f"{self.terminal.YELLOW}Invalid selection. Use numbers, ranges (1-5), or model names{self.terminal.RESET}")
@@ -1396,7 +1396,7 @@ class SmaLLMsLauncher:
         name = config_dict.get('name', 'Evaluation')
         
         if not models:
-            print(f"{self.terminal.RED}❌ No models selected{self.terminal.RESET}")
+            print(f"{self.terminal.RED} No models selected{self.terminal.RESET}")
             return False
 
         # Initialize storage and start evaluation session
@@ -1405,12 +1405,12 @@ class SmaLLMsLauncher:
         session_name = f"local_eval_{len(models)}models_{samples}samples"
         session_id = storage.start_evaluation_session(session_name)
         
-        print(f"\n{self.terminal.BOLD}🚀 Starting {name}{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Starting {name}{self.terminal.RESET}")
         print(f"Models: {len(models)} | Benchmark: {benchmark} | Samples: {samples}")
         print(f"Session: {session_id}")
         print(f"Results: evaluation_sessions/{datetime.now().strftime('%Y-%m-%d')}/{session_id}/\n")
         
-        # 🔥 CRITICAL: Resource estimation and warning system
+        #  CRITICAL: Resource estimation and warning system
         from src.benchmarks.benchmark_registry import BenchmarkRegistry
         registry = BenchmarkRegistry(self.config)
         
@@ -1419,26 +1419,26 @@ class SmaLLMsLauncher:
             total_evaluations = len(models) * len(expanded_benchmarks) * samples
             estimated_hours = total_evaluations * 0.02 / 60  # Rough estimate: 1.2 seconds per evaluation
             
-            print(f"{self.terminal.YELLOW}⚠️  RESOURCE WARNING:{self.terminal.RESET}")
+            print(f"{self.terminal.YELLOW}  RESOURCE WARNING:{self.terminal.RESET}")
             print(f"   • Total evaluations: {total_evaluations:,} ({len(models)} models × {len(expanded_benchmarks)} benchmarks × {samples} samples)")
             print(f"   • Estimated time: {estimated_hours:.1f} hours")
             print(f"   • Benchmarks: {', '.join(expanded_benchmarks)}")
             
             if total_evaluations > 5000:
-                print(f"\n{self.terminal.RED}🚨 MASSIVE EVALUATION DETECTED!{self.terminal.RESET}")
+                print(f"\n{self.terminal.RED} MASSIVE EVALUATION DETECTED!{self.terminal.RESET}")
                 print(f"This evaluation will take {estimated_hours:.1f} hours and may overwhelm your system.")
-                print(f"\n{self.terminal.CYAN}💡 Recommended alternatives:{self.terminal.RESET}")
+                print(f"\n{self.terminal.CYAN} Recommended alternatives:{self.terminal.RESET}")
                 print(f"   • Use 'comprehensive_suite' (6 benchmarks) instead of 'all_benchmarks' (14 benchmarks)")
                 print(f"   • Use 'safe_suite' (2 benchmarks) for slow laptops")
                 print(f"   • Reduce sample count to 25-50 for initial testing")
                 print(f"   • Run fewer models at once (5-10 instead of {len(models)})")
-                print(f"\n{self.terminal.YELLOW}⚠️  For slow laptops:{self.terminal.RESET}")
+                print(f"\n{self.terminal.YELLOW}  For slow laptops:{self.terminal.RESET}")
                 print(f"   • Use the 'safe' preset for most reliable experience")
                 print(f"   • Some benchmarks require internet for dataset downloads")
                 
                 confirm = input(f"\n{self.terminal.YELLOW}Continue with this massive evaluation anyway? [y/N]:{self.terminal.RESET} ").strip().lower()
                 if confirm not in ['y', 'yes']:
-                    print(f"{self.terminal.GREEN}✅ Smart choice! Try a smaller evaluation first.{self.terminal.RESET}")
+                    print(f"{self.terminal.GREEN} Smart choice! Try a smaller evaluation first.{self.terminal.RESET}")
                     return False
         
         # Store evaluation metadata for export
@@ -1475,10 +1475,10 @@ class SmaLLMsLauncher:
                     completed_evaluations.add(key)
             
             if completed_evaluations:
-                print(f"📂 Found {len(completed_evaluations)} completed evaluations from previous session - will skip these")
+                print(f" Found {len(completed_evaluations)} completed evaluations from previous session - will skip these")
             
             for i, model_name in enumerate(models, 1):
-                print(f"\n{self.terminal.CYAN}📊 Evaluating model {i}/{total_models}: {model_name}{self.terminal.RESET}")
+                print(f"\n{self.terminal.CYAN} Evaluating model {i}/{total_models}: {model_name}{self.terminal.RESET}")
                 
                 # Handle benchmark suites by expanding them to individual benchmarks
                 from src.benchmarks.benchmark_registry import BenchmarkRegistry
@@ -1497,7 +1497,7 @@ class SmaLLMsLauncher:
                     # Check if this evaluation was already completed
                     eval_key = f"{model_name}_{bench}"
                     if eval_key in completed_evaluations:
-                        print(f"  {self.terminal.GREEN}✅ {bench}: Already completed (skipped){self.terminal.RESET}")
+                        print(f"  {self.terminal.GREEN} {bench}: Already completed (skipped){self.terminal.RESET}")
                         continue
                     
                     print(f"  {self.terminal.GRAY}Running {bench} benchmark...{self.terminal.RESET}")
@@ -1516,48 +1516,48 @@ class SmaLLMsLauncher:
                         
                         # Show result
                         if model_result.error:
-                            print(f"    {self.terminal.RED}❌ {bench}: {model_result.error}{self.terminal.RESET}")
+                            print(f"    {self.terminal.RED} {bench}: {model_result.error}{self.terminal.RESET}")
                             consecutive_failures += 1
                             model_success = False
                             
                             # If multiple timeouts in a row, suggest reducing scope
                             if 'timeout' in model_result.error.lower():
-                                print(f"    {self.terminal.YELLOW}💡 Tip: This model may be too slow for {samples} samples. Consider reducing sample count or using smaller benchmarks.{self.terminal.RESET}")
+                                print(f"    {self.terminal.YELLOW} Tip: This model may be too slow for {samples} samples. Consider reducing sample count or using smaller benchmarks.{self.terminal.RESET}")
                                 
                                 # Auto-skip if too many consecutive failures
                                 if consecutive_failures >= 3:
-                                    print(f"    {self.terminal.YELLOW}⚠️  Skipping remaining benchmarks for {model_name} due to repeated failures{self.terminal.RESET}")
+                                    print(f"    {self.terminal.YELLOW}  Skipping remaining benchmarks for {model_name} due to repeated failures{self.terminal.RESET}")
                                     failed_models.append(model_name)
                                     break
                         else:
                             accuracy = model_result.accuracy * 100
-                            print(f"    {self.terminal.GREEN}✅ {bench}: {accuracy:.1f}% accuracy{self.terminal.RESET}")
+                            print(f"    {self.terminal.GREEN} {bench}: {accuracy:.1f}% accuracy{self.terminal.RESET}")
                             consecutive_failures = 0  # Reset failure counter on success
                         
                         # Save checkpoint after each benchmark
                         completed_evaluations.add(eval_key)
                         
                     except Exception as bench_error:
-                        print(f"    {self.terminal.RED}❌ {bench}: {bench_error}{self.terminal.RESET}")
+                        print(f"    {self.terminal.RED} {bench}: {bench_error}{self.terminal.RESET}")
                         consecutive_failures += 1
                         model_success = False
                         
                         # If this looks like a resource issue, offer guidance
                         if 'timeout' in str(bench_error).lower() or 'connection' in str(bench_error).lower():
-                            print(f"    {self.terminal.YELLOW}💡 Resource tip: Try 'ollama list' to check if model is loaded, or reduce concurrent evaluations{self.terminal.RESET}")
+                            print(f"    {self.terminal.YELLOW} Resource tip: Try 'ollama list' to check if model is loaded, or reduce concurrent evaluations{self.terminal.RESET}")
                             
                             # Auto-skip after repeated connection failures
                             if consecutive_failures >= 3:
-                                print(f"    {self.terminal.YELLOW}⚠️  Skipping remaining benchmarks for {model_name} due to connection issues{self.terminal.RESET}")
+                                print(f"    {self.terminal.YELLOW}  Skipping remaining benchmarks for {model_name} due to connection issues{self.terminal.RESET}")
                                 failed_models.append(model_name)
                                 break
                         continue
                 
                 if model_success or consecutive_failures < 3:
                     completed_models += 1
-                    print(f"{self.terminal.GREEN}✅ Completed {model_name}{self.terminal.RESET}")
+                    print(f"{self.terminal.GREEN} Completed {model_name}{self.terminal.RESET}")
                 else:
-                    print(f"{self.terminal.YELLOW}⚠️  Partially completed {model_name} (some benchmarks failed){self.terminal.RESET}")
+                    print(f"{self.terminal.YELLOW}  Partially completed {model_name} (some benchmarks failed){self.terminal.RESET}")
                 
                 # Brief pause between models (laptop-friendly)
                 if i < len(models):
@@ -1576,22 +1576,22 @@ class SmaLLMsLauncher:
             storage.end_evaluation_session()
             
             # Smart summary with actionable guidance
-            print(f"\n{self.terminal.GREEN}✅ Evaluation completed!{self.terminal.RESET}")
-            print(f"📊 Results: {completed_models}/{total_models} models successful")
-            print(f"📈 Total evaluations: {len(completed_evaluations)}")
+            print(f"\n{self.terminal.GREEN} Evaluation completed!{self.terminal.RESET}")
+            print(f" Results: {completed_models}/{total_models} models successful")
+            print(f" Total evaluations: {len(completed_evaluations)}")
             
             if failed_models:
-                print(f"\n{self.terminal.YELLOW}⚠️  Models with issues: {len(failed_models)}{self.terminal.RESET}")
+                print(f"\n{self.terminal.YELLOW}  Models with issues: {len(failed_models)}{self.terminal.RESET}")
                 for model in failed_models:
                     print(f"   • {model}")
-                print(f"\n{self.terminal.CYAN}💡 Improvement suggestions:{self.terminal.RESET}")
+                print(f"\n{self.terminal.CYAN} Improvement suggestions:{self.terminal.RESET}")
                 print(f"   • Try smaller benchmarks first (gsm8k, mmlu)")
                 print(f"   • Reduce sample count to 25-50")
                 print(f"   • Check 'ollama list' to ensure models are loaded")
                 print(f"   • Restart Ollama service if connections are failing")
             
-            print(f"\n� Results saved to evaluation_sessions/{datetime.now().strftime('%Y-%m-%d')}/{session_id}/")
-            print(f"💡 Run 'export' to create website files")
+            print(f"\n Results saved to evaluation_sessions/{datetime.now().strftime('%Y-%m-%d')}/{session_id}/")
+            print(f" Run 'export' to create website files")
             
             return completed_models > 0  # Return True if at least some models completed
             
@@ -1601,7 +1601,7 @@ class SmaLLMsLauncher:
                 storage.end_evaluation_session()
             except:
                 pass
-            print(f"\n{self.terminal.RED}❌ Evaluation failed: {e}{self.terminal.RESET}")
+            print(f"\n{self.terminal.RED} Evaluation failed: {e}{self.terminal.RESET}")
             import traceback
             print(f"{self.terminal.GRAY}{traceback.format_exc()}{self.terminal.RESET}")
             return False
@@ -1614,10 +1614,10 @@ class SmaLLMsLauncher:
         name = config_dict.get('name', 'Evaluation')
         
         if not models:
-            print(f"{self.terminal.RED}❌ No models selected{self.terminal.RESET}")
+            print(f"{self.terminal.RED} No models selected{self.terminal.RESET}")
             return False
         
-        print(f"\n{self.terminal.BOLD}🚀 Starting {name}{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Starting {name}{self.terminal.RESET}")
         print(f"Models: {len(models)} | Benchmark: {benchmark} | Samples: {samples}")
         print(f"Results: smaLLMs_results/ - organized by date\n")
         
@@ -1653,7 +1653,7 @@ class SmaLLMsLauncher:
         
         try:
             # Run the actual evaluation - this method needs to be async
-            print(f"{self.terminal.YELLOW}⚠️  Starting evaluation (this will take some time)...{self.terminal.RESET}")
+            print(f"{self.terminal.YELLOW}  Starting evaluation (this will take some time)...{self.terminal.RESET}")
             
             # For now, let's use a simple synchronous approach
             # We'll create a basic evaluation loop that shows progress
@@ -1664,7 +1664,7 @@ class SmaLLMsLauncher:
             completed_models = 0
             
             for i, model_name in enumerate(models, 1):
-                print(f"\n{self.terminal.CYAN}📊 Evaluating model {i}/{total_models}: {model_name}{self.terminal.RESET}")
+                print(f"\n{self.terminal.CYAN} Evaluating model {i}/{total_models}: {model_name}{self.terminal.RESET}")
                 
                 # Handle benchmark suites by expanding them to individual benchmarks
                 from src.benchmarks.benchmark_registry import BenchmarkRegistry
@@ -1693,60 +1693,60 @@ class SmaLLMsLauncher:
                         
                         # Show result
                         if model_result.error:
-                            print(f"    {self.terminal.RED}❌ {bench}: {model_result.error}{self.terminal.RESET}")
+                            print(f"    {self.terminal.RED} {bench}: {model_result.error}{self.terminal.RESET}")
                         else:
                             accuracy = model_result.accuracy * 100
-                            print(f"    {self.terminal.GREEN}✅ {bench}: {accuracy:.1f}% accuracy{self.terminal.RESET}")
+                            print(f"    {self.terminal.GREEN} {bench}: {accuracy:.1f}% accuracy{self.terminal.RESET}")
                         
                     except Exception as bench_error:
-                        print(f"    {self.terminal.RED}❌ {bench}: {bench_error}{self.terminal.RESET}")
+                        print(f"    {self.terminal.RED} {bench}: {bench_error}{self.terminal.RESET}")
                         continue
                 
                 completed_models += 1
-                print(f"{self.terminal.GREEN}✅ Completed {model_name}{self.terminal.RESET}")
+                print(f"{self.terminal.GREEN} Completed {model_name}{self.terminal.RESET}")
                 
                 # Brief pause between models (laptop-friendly)
                 import time
                 time.sleep(3)
             
-            print(f"\n{self.terminal.GREEN}✅ Evaluation completed! {completed_models}/{total_models} models successful{self.terminal.RESET}")
-            print(f"📊 Results saved to smaLLMs_results/")
-            print(f"💡 Run 'export' to create website files")
+            print(f"\n{self.terminal.GREEN} Evaluation completed! {completed_models}/{total_models} models successful{self.terminal.RESET}")
+            print(f" Results saved to smaLLMs_results/")
+            print(f" Run 'export' to create website files")
             return True
             
         except Exception as e:
-            print(f"\n{self.terminal.RED}❌ Evaluation failed: {e}{self.terminal.RESET}")
+            print(f"\n{self.terminal.RED} Evaluation failed: {e}{self.terminal.RESET}")
             import traceback
             print(f"{self.terminal.GRAY}{traceback.format_exc()}{self.terminal.RESET}")
             return False
     
     def export_results(self):
         """Export results for website."""
-        print(f"\n{self.terminal.BOLD}📤 Exporting Results{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Exporting Results{self.terminal.RESET}")
         
         try:
             exported_files = self.exporter.export_for_website()
             
             if exported_files:
-                print(f"\n{self.terminal.GREEN}✅ Export completed!{self.terminal.RESET}")
+                print(f"\n{self.terminal.GREEN} Export completed!{self.terminal.RESET}")
                 print(f"{self.terminal.BOLD}Files created:{self.terminal.RESET}")
                 for file_type, file_path in exported_files.items():
-                    print(f"  📄 {file_type.upper()}: {Path(file_path).name}")
+                    print(f"   {file_type.upper()}: {Path(file_path).name}")
                 
-                print(f"\n{self.terminal.YELLOW}💡 Next steps:{self.terminal.RESET}")
+                print(f"\n{self.terminal.YELLOW} Next steps:{self.terminal.RESET}")
                 print("  • Open HTML file in browser to view results")
                 print("  • Copy JSON to your website project")  
                 print("  • Use CSV for detailed analysis in Excel")
             else:
-                print(f"{self.terminal.YELLOW}⚠️  No results found to export{self.terminal.RESET}")
+                print(f"{self.terminal.YELLOW}  No results found to export{self.terminal.RESET}")
                 print("Run some evaluations first!")
                 
         except Exception as e:
-            print(f"{self.terminal.RED}❌ Export failed: {e}{self.terminal.RESET}")
+            print(f"{self.terminal.RED} Export failed: {e}{self.terminal.RESET}")
     
     def show_status(self):
         """Show current results summary."""
-        print(f"\n{self.terminal.BOLD}📊 Current Status{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD} Current Status{self.terminal.RESET}")
         
         # Check for recent results
         cache_dir = Path("results/cache")
@@ -1757,14 +1757,14 @@ class SmaLLMsLauncher:
         report_files = list(report_dir.glob("*.json")) if report_dir.exists() else []
         export_files = list(export_dir.glob("*")) if export_dir.exists() else []
         
-        print(f"📁 {self.terminal.CYAN}results/cache/{self.terminal.RESET}: {len(cache_files)} cached evaluations")
-        print(f"📁 {self.terminal.CYAN}smaLLMs_results/{self.terminal.RESET}: {len(report_files)} reports")
-        print(f"📁 {self.terminal.CYAN}website_exports/{self.terminal.RESET}: {len(export_files)} export files")
+        print(f" {self.terminal.CYAN}results/cache/{self.terminal.RESET}: {len(cache_files)} cached evaluations")
+        print(f" {self.terminal.CYAN}smaLLMs_results/{self.terminal.RESET}: {len(report_files)} reports")
+        print(f" {self.terminal.CYAN}website_exports/{self.terminal.RESET}: {len(export_files)} export files")
         
         if report_files:
             latest_report = max(report_files, key=lambda x: x.stat().st_mtime)
             mod_time = datetime.fromtimestamp(latest_report.stat().st_mtime)
-            print(f"\n{self.terminal.GREEN}📋 Latest report:{self.terminal.RESET} {latest_report.name}")
+            print(f"\n{self.terminal.GREEN} Latest report:{self.terminal.RESET} {latest_report.name}")
             print(f"   Modified: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Quick summary from exporter
@@ -1786,7 +1786,7 @@ class SmaLLMsLauncher:
                 cmd = input(f"\n{self.terminal.BOLD}smaLLMs{self.terminal.RESET} {self.terminal.GRAY}${self.terminal.RESET} ").strip().lower()
                 
                 if cmd in ['exit', 'quit', 'q']:
-                    print(f"{self.terminal.YELLOW}👋 Goodbye!{self.terminal.RESET}")
+                    print(f"{self.terminal.YELLOW} Goodbye!{self.terminal.RESET}")
                     break
                 
                 # Mode Selection
@@ -1822,17 +1822,17 @@ class SmaLLMsLauncher:
                     # Quick marathon mode from main menu
                     success = asyncio.run(self.run_marathon_mode())
                     if success:
-                        print(f"\n{self.terminal.GREEN}🏆 Marathon Mode completed! Check 'status' for comprehensive results{self.terminal.RESET}")
+                        print(f"\n{self.terminal.GREEN} Marathon Mode completed! Check 'status' for comprehensive results{self.terminal.RESET}")
                     self.print_welcome()  # Return to main menu
                     
                 else:
-                    print(f"{self.terminal.YELLOW}❓ Unknown command: {cmd}{self.terminal.RESET}")
+                    print(f"{self.terminal.YELLOW} Unknown command: {cmd}{self.terminal.RESET}")
                     print(f"Type 'local' for local models, 'cloud' for HuggingFace models, or 'help' for options")
                     
             except KeyboardInterrupt:
                 print(f"\n{self.terminal.YELLOW}Use 'exit' to quit{self.terminal.RESET}")
             except Exception as e:
-                print(f"{self.terminal.RED}❌ Error: {e}{self.terminal.RESET}")
+                print(f"{self.terminal.RED} Error: {e}{self.terminal.RESET}")
                 import traceback
                 print(f"{self.terminal.GRAY}{traceback.format_exc()}{self.terminal.RESET}")
 

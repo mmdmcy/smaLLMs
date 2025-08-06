@@ -30,7 +30,7 @@ class EvaluationConfig:
 
 @dataclass
 class EvaluationResult:
-    """Result of a single evaluation."""
+    """Result of a single evaluation with comprehensive statistics."""
     model_name: str
     benchmark_name: str
     accuracy: float
@@ -40,6 +40,58 @@ class EvaluationResult:
     num_samples: int
     detailed_results: Optional[List[Dict]] = None
     error: Optional[str] = None
+    
+    # Enhanced statistics
+    provider: str = "Unknown"
+    model_size_gb: float = 0.0
+    model_parameters: str = "Unknown"
+    load_time: float = 0.0
+    avg_response_time: float = 0.0
+    min_response_time: float = 0.0
+    max_response_time: float = 0.0
+    tokens_per_second: float = 0.0
+    memory_usage_mb: float = 0.0
+    error_count: int = 0
+    total_requests: int = 0
+    success_count: int = 0
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with all statistics."""
+        return {
+            'model': self.model_name,
+            'model_name': self.model_name,
+            'benchmark': self.benchmark_name,
+            'benchmark_name': self.benchmark_name,
+            'accuracy': self.accuracy,
+            'duration': self.latency,
+            'latency': self.latency,
+            'cost': self.cost_estimate,
+            'cost_estimate': self.cost_estimate,
+            'timestamp': self.timestamp,
+            'num_samples': self.num_samples,
+            'error': self.error,
+            
+            # Enhanced statistics
+            'provider': self.provider,
+            'model_provider': self.provider,
+            'model_size_gb': self.model_size_gb,
+            'size_gb': self.model_size_gb,
+            'model_parameters': self.model_parameters,
+            'parameters': self.model_parameters,
+            'load_time': self.load_time,
+            'model_load_time': self.load_time,
+            'avg_response_time': self.avg_response_time,
+            'min_response_time': self.min_response_time,
+            'max_response_time': self.max_response_time,
+            'tokens_per_second': self.tokens_per_second,
+            'throughput': self.tokens_per_second,
+            'memory_usage_mb': self.memory_usage_mb,
+            'memory_usage': self.memory_usage_mb,
+            'error_count': self.error_count,
+            'total_requests': self.total_requests,
+            'success_count': self.success_count,
+            'detailed_results': self.detailed_results
+        }
 
 class EvaluationOrchestrator:
     """
@@ -80,18 +132,28 @@ class EvaluationOrchestrator:
             return {}
     
     async def evaluate_single(self, config: EvaluationConfig) -> EvaluationResult:
-        """Run a single model-benchmark evaluation."""
+        """Run a single model-benchmark evaluation with comprehensive statistics collection."""
         async with self.semaphore:
             self.logger.info(f"Starting evaluation: {config.model_name} on {config.benchmark_name}")
             
             start_time = time.time()
+            load_start_time = time.time()
             
             try:
-                # Load model and benchmark
+                # Load model and collect model info
                 model = await self.model_manager.get_model(config.model_name)
+                load_time = time.time() - load_start_time
+                
+                # Get model information
+                model_info = model.get_model_info()
+                
                 benchmark = self.benchmark_registry.get_benchmark(config.benchmark_name)
                 
-                # Run evaluation
+                # Track response times during evaluation
+                eval_start_time = time.time()
+                response_times = []
+                
+                # Run evaluation with enhanced timing
                 results = await benchmark.evaluate(
                     model=model,
                     num_samples=config.num_samples,
@@ -101,10 +163,39 @@ class EvaluationOrchestrator:
                     timeout=config.timeout
                 )
                 
-                # Calculate metrics
+                eval_duration = time.time() - eval_start_time
+                
+                # Collect response time statistics from results
+                for result_item in results:
+                    if isinstance(result_item, dict) and 'response_time' in result_item:
+                        response_times.append(result_item['response_time'])
+                
+                # Calculate comprehensive metrics
                 accuracy = self.result_aggregator.calculate_accuracy(results)
                 latency = time.time() - start_time
                 cost_estimate = self.result_aggregator.estimate_cost(results, config.model_name)
+                
+                # Calculate enhanced statistics
+                total_requests = len(results)
+                error_count = sum(1 for r in results if isinstance(r, dict) and r.get('error'))
+                success_count = total_requests - error_count
+                
+                # Response time statistics
+                if response_times:
+                    avg_response_time = sum(response_times) / len(response_times)
+                    min_response_time = min(response_times)
+                    max_response_time = max(response_times)
+                else:
+                    avg_response_time = eval_duration / max(1, total_requests)
+                    min_response_time = 0.0
+                    max_response_time = 0.0
+                
+                # Calculate tokens per second (rough estimation)
+                estimated_tokens = total_requests * config.max_tokens * 0.3  # Rough estimate
+                tokens_per_second = estimated_tokens / max(eval_duration, 0.1)
+                
+                # Memory usage estimation (basic heuristic based on model size)
+                memory_usage_mb = model_info.size_gb * 1024 * 1.2 if model_info.size_gb > 0 else 0.0
                 
                 result = EvaluationResult(
                     model_name=config.model_name,
@@ -114,17 +205,46 @@ class EvaluationOrchestrator:
                     cost_estimate=cost_estimate,
                     timestamp=time.strftime('%Y-%m-%d %H:%M:%S'),
                     num_samples=config.num_samples,
-                    detailed_results=results[:5]  # Store only first 5 for space efficiency
+                    detailed_results=results[:5],  # Store only first 5 for space efficiency
+                    
+                    # Enhanced statistics
+                    provider=model_info.provider,
+                    model_size_gb=model_info.size_gb,
+                    model_parameters=model_info.parameters,
+                    load_time=load_time,
+                    avg_response_time=avg_response_time,
+                    min_response_time=min_response_time,
+                    max_response_time=max_response_time,
+                    tokens_per_second=tokens_per_second,
+                    memory_usage_mb=memory_usage_mb,
+                    error_count=error_count,
+                    total_requests=total_requests,
+                    success_count=success_count
                 )
                 
                 # Save result with session
                 await self.storage.save_result(result, session_id=self.session_id)
                 
-                self.logger.info(f"Completed: {config.model_name} on {config.benchmark_name} - Accuracy: {accuracy:.3f}")
+                self.logger.info(f"Completed: {config.model_name} on {config.benchmark_name} - Accuracy: {accuracy:.3f}, Provider: {model_info.provider}, Load Time: {load_time:.2f}s")
                 return result
                 
             except Exception as e:
                 self.logger.error(f"Error evaluating {config.model_name} on {config.benchmark_name}: {str(e)}")
+                
+                # Try to get basic model info even on error
+                provider = "Unknown"
+                model_size_gb = 0.0
+                model_parameters = "Unknown"
+                
+                try:
+                    model = await self.model_manager.get_model(config.model_name)
+                    model_info = model.get_model_info()
+                    provider = model_info.provider
+                    model_size_gb = model_info.size_gb
+                    model_parameters = model_info.parameters
+                except:
+                    pass
+                
                 return EvaluationResult(
                     model_name=config.model_name,
                     benchmark_name=config.benchmark_name,
@@ -133,7 +253,13 @@ class EvaluationOrchestrator:
                     cost_estimate=0.0,
                     timestamp=time.strftime('%Y-%m-%d %H:%M:%S'),
                     num_samples=0,
-                    error=str(e)
+                    error=str(e),
+                    provider=provider,
+                    model_size_gb=model_size_gb,
+                    model_parameters=model_parameters,
+                    error_count=1,
+                    total_requests=1,
+                    success_count=0
                 )
             finally:
                 # Cleanup model sessions after each evaluation

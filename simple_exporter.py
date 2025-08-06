@@ -84,7 +84,7 @@ class SimpleResultsExporter:
                             'date_folder': str(latest_run.parent.name)
                         }
                         
-                        print(f"📊 Loaded {len(report.get('detailed_results', []))} results from organized run: {latest_run.name}")
+                        print(f" Loaded {len(report.get('detailed_results', []))} results from organized run: {latest_run.name}")
                 except Exception as e:
                     print(f"Error loading organized report {json_report}: {e}")
             
@@ -105,7 +105,7 @@ class SimpleResultsExporter:
         
         # Fallback to old structure if no organized results found
         if not all_results:
-            print("📂 No organized results found, checking legacy structure...")
+            print(" No organized results found, checking legacy structure...")
             report_files = list(self.results_dir.glob("intelligent_evaluation_report_*.json"))
             if report_files:
                 latest_report = max(report_files, key=lambda x: x.stat().st_mtime)
@@ -126,13 +126,13 @@ class SimpleResultsExporter:
                             'structure': 'legacy'
                         }
                         
-                        print(f"📊 Loaded {len(report.get('detailed_results', []))} results from legacy file: {latest_report.name}")
+                        print(f" Loaded {len(report.get('detailed_results', []))} results from legacy file: {latest_report.name}")
                 except Exception as e:
                     print(f"Error loading legacy report {latest_report}: {e}")
         
         # Final fallback to cache
         if not all_results:
-            print("📂 No reports found, loading from cache...")
+            print(" No reports found, loading from cache...")
             cache_files = list(self.cache_dir.glob("*.json"))
             for cache_file in sorted(cache_files, key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
                 try:
@@ -146,7 +146,7 @@ class SimpleResultsExporter:
         return {'results': all_results, 'metadata': metadata}
     
     def create_clean_leaderboard(self, results: List[Dict]) -> pd.DataFrame:
-        """Create a clean leaderboard from results."""
+        """Create a comprehensive leaderboard with detailed statistics from results."""
         if not results:
             return pd.DataFrame()
         
@@ -163,6 +163,22 @@ class SimpleResultsExporter:
             cost = result.get('cost', result.get('cost_estimate', 0))
             duration = result.get('duration', result.get('latency', 0))
             
+            # Extract additional statistics
+            load_time = result.get('load_time', result.get('model_load_time', 0))
+            tokens_per_second = result.get('tokens_per_second', result.get('throughput', 0))
+            memory_usage = result.get('memory_usage_mb', result.get('memory_usage', 0))
+            model_provider = result.get('provider', result.get('model_provider', 'Unknown'))
+            model_size_gb = result.get('model_size_gb', result.get('size_gb', 0))
+            model_parameters = result.get('model_parameters', result.get('parameters', 'Unknown'))
+            error_count = result.get('error_count', 0)
+            total_requests = result.get('total_requests', result.get('num_samples', 1))
+            avg_response_time = result.get('avg_response_time', duration)
+            min_response_time = result.get('min_response_time', 0)
+            max_response_time = result.get('max_response_time', 0)
+            
+            # Calculate success rate for this specific evaluation
+            success_rate_this_eval = max(0, (total_requests - error_count) / max(1, total_requests))
+            
             # Clean the data
             if pd.isna(accuracy) or accuracy is None:
                 accuracy = 0.0
@@ -174,55 +190,143 @@ class SimpleResultsExporter:
             if model not in model_data:
                 model_data[model] = {
                     'model_name': model,
+                    'model_provider': model_provider,
+                    'model_size_gb': float(model_size_gb) if model_size_gb else 0.0,
+                    'model_parameters': model_parameters,
                     'evaluations': [],
                     'benchmarks': {},
+                    'benchmark_timings': {},
                     'total_cost': 0.0,
                     'total_time': 0.0,
-                    'eval_count': 0
+                    'total_load_time': 0.0,
+                    'total_tokens': 0.0,
+                    'total_memory_usage': 0.0,
+                    'total_errors': 0,
+                    'total_requests': 0,
+                    'eval_count': 0,
+                    'response_times': [],
+                    'per_benchmark_stats': {}
                 }
             
             model_data[model]['evaluations'].append(result)
             model_data[model]['benchmarks'][benchmark] = float(accuracy)
+            model_data[model]['benchmark_timings'][benchmark] = float(duration)
             model_data[model]['total_cost'] += float(cost)
             model_data[model]['total_time'] += float(duration)
+            model_data[model]['total_load_time'] += float(load_time)
+            model_data[model]['total_memory_usage'] += float(memory_usage)
+            model_data[model]['total_errors'] += int(error_count)
+            model_data[model]['total_requests'] += int(total_requests)
             model_data[model]['eval_count'] += 1
+            
+            # Track response times
+            if avg_response_time > 0:
+                model_data[model]['response_times'].append(float(avg_response_time))
+            
+            # Per-benchmark detailed stats
+            if benchmark not in model_data[model]['per_benchmark_stats']:
+                model_data[model]['per_benchmark_stats'][benchmark] = {
+                    'accuracy': float(accuracy),
+                    'duration': float(duration),
+                    'cost': float(cost),
+                    'success_rate': success_rate_this_eval,
+                    'tokens_per_second': float(tokens_per_second),
+                    'memory_usage': float(memory_usage)
+                }
         
-        # Convert to leaderboard
+        # Convert to comprehensive leaderboard
         leaderboard_data = []
         
         for model, data in model_data.items():
-            # Calculate metrics
+            # Calculate comprehensive metrics
             benchmark_scores = [score for score in data['benchmarks'].values() if score > 0]
             avg_accuracy = np.mean(benchmark_scores) if benchmark_scores else 0.0
-            success_rate = len(benchmark_scores) / data['eval_count'] if data['eval_count'] > 0 else 0.0
+            overall_success_rate = max(0, (data['total_requests'] - data['total_errors']) / max(1, data['total_requests']))
             avg_cost = data['total_cost'] / data['eval_count'] if data['eval_count'] > 0 else 0.0
             avg_duration = data['total_time'] / data['eval_count'] if data['eval_count'] > 0 else 0.0
+            avg_load_time = data['total_load_time'] / data['eval_count'] if data['eval_count'] > 0 else 0.0
+            avg_memory = data['total_memory_usage'] / data['eval_count'] if data['eval_count'] > 0 else 0.0
+            
+            # Response time statistics
+            response_times = data['response_times']
+            median_response_time = np.median(response_times) if response_times else 0.0
+            p95_response_time = np.percentile(response_times, 95) if response_times else 0.0
+            response_time_std = np.std(response_times) if response_times else 0.0
+            
+            # Calculate efficiency metrics
+            cost_efficiency = round(float(overall_success_rate / (avg_cost + 0.001)), 2)
+            time_efficiency = round(float(avg_accuracy / (avg_duration + 0.1)), 4)  # Accuracy per second
+            memory_efficiency = round(float(avg_accuracy / (avg_memory + 1)), 4) if avg_memory > 0 else round(avg_accuracy, 4)
+            
+            # Reliability score (combination of success rate and consistency)
+            reliability_score = overall_success_rate * (1 - min(response_time_std / (median_response_time + 1), 0.5))
             
             # Clean model name for display
             clean_model_name = model.split('/')[-1] if '/' in model else model
             
             entry = {
+                # Basic identification
                 'Model': clean_model_name,
                 'Full_Model_Name': model,
+                'Provider': data['model_provider'],
+                'Model_Size_GB': round(float(data['model_size_gb']), 2),
+                'Parameters': data['model_parameters'],
+                
+                # Performance metrics
                 'Overall_Accuracy': round(float(avg_accuracy), 3),
-                'Success_Rate': round(float(success_rate), 3),
-                'Evaluations': int(data['eval_count']),
+                'Success_Rate': round(float(overall_success_rate), 3),
+                'Reliability_Score': round(float(reliability_score), 3),
+                
+                # Timing metrics
+                'Avg_Duration_Seconds': round(float(avg_duration), 2),
+                'Avg_Load_Time_Seconds': round(float(avg_load_time), 2),
+                'Median_Response_Time': round(float(median_response_time), 2),
+                'P95_Response_Time': round(float(p95_response_time), 2),
+                'Response_Time_Std': round(float(response_time_std), 2),
+                
+                # Resource metrics
+                'Avg_Memory_Usage_MB': round(float(avg_memory), 1),
+                'Memory_Efficiency': round(float(memory_efficiency), 4),
+                
+                # Cost metrics
                 'Total_Cost': round(float(data['total_cost']), 4),
-                'Avg_Cost': round(float(avg_cost), 6),
-                'Avg_Duration_Seconds': round(float(avg_duration), 1),
-                'Cost_Efficiency': round(float(success_rate / (avg_cost + 0.001)), 2)
+                'Avg_Cost_Per_Eval': round(float(avg_cost), 6),
+                'Cost_Efficiency': cost_efficiency,
+                
+                # Efficiency scores
+                'Time_Efficiency': time_efficiency,  # Accuracy per second
+                'Overall_Efficiency': round((cost_efficiency + time_efficiency + memory_efficiency) / 3, 3),
+                
+                # Evaluation statistics
+                'Evaluations_Count': int(data['eval_count']),
+                'Total_Requests': int(data['total_requests']),
+                'Total_Errors': int(data['total_errors']),
+                'Error_Rate': round(float(data['total_errors'] / max(1, data['total_requests'])), 3)
             }
             
             # Add benchmark-specific scores
             for benchmark, score in data['benchmarks'].items():
-                entry[f'{benchmark.upper()}'] = round(float(score), 3)
+                entry[f'{benchmark.upper()}_Accuracy'] = round(float(score), 3)
+                # Add timing for each benchmark
+                if benchmark in data['benchmark_timings']:
+                    entry[f'{benchmark.upper()}_Time_Sec'] = round(float(data['benchmark_timings'][benchmark]), 2)
+                # Add detailed stats if available
+                if benchmark in data['per_benchmark_stats']:
+                    stats = data['per_benchmark_stats'][benchmark]
+                    entry[f'{benchmark.upper()}_Success_Rate'] = round(float(stats['success_rate']), 3)
+                    if stats['tokens_per_second'] > 0:
+                        entry[f'{benchmark.upper()}_Tokens_Per_Sec'] = round(float(stats['tokens_per_second']), 1)
             
             leaderboard_data.append(entry)
         
-        # Create DataFrame and sort
+        # Create DataFrame and sort by overall efficiency
         df = pd.DataFrame(leaderboard_data)
         if not df.empty:
-            df = df.sort_values(['Overall_Accuracy', 'Success_Rate'], ascending=[False, False])
+            # Sort by multiple criteria: overall accuracy, efficiency, and reliability
+            df = df.sort_values(
+                ['Overall_Accuracy', 'Overall_Efficiency', 'Reliability_Score'], 
+                ascending=[False, False, False]
+            )
             df.reset_index(drop=True, inplace=True)
             df.index = df.index + 1  # Start from rank 1
         
@@ -242,21 +346,21 @@ class SimpleResultsExporter:
         # Create directories
         run_output.mkdir(parents=True, exist_ok=True)
         
-        print(f"📤 Exporting to organized structure: {run_output.absolute()}")
+        print(f" Exporting to organized structure: {run_output.absolute()}")
         
         # Load results
         data = self.load_latest_results()
         results = data.get('results', [])
         
         if not results:
-            print("❌ No results found to export!")
+            print(" No results found to export!")
             return {}
         
         # Create leaderboard
         df = self.create_clean_leaderboard(results)
         
         if df.empty:
-            print("❌ No valid data to export!")
+            print(" No valid data to export!")
             return {}
         
         exported_files = {}
@@ -270,7 +374,7 @@ class SimpleResultsExporter:
         csv_file = run_output / f"{base_name}.csv"
         df.to_csv(csv_file, index=True)
         exported_files['csv'] = str(csv_file)
-        print(f"✅ CSV exported: {csv_file.name}")
+        print(f" CSV exported: {csv_file.name}")
         
         # 2. JSON Export (for web APIs)
         # Convert DataFrame to clean dict with Python types
@@ -308,7 +412,7 @@ class SimpleResultsExporter:
         with open(json_file, 'w') as f:
             json.dump(json_data, f, indent=2)
         exported_files['json'] = str(json_file)
-        print(f"✅ JSON exported: {json_file.name}")
+        print(f" JSON exported: {json_file.name}")
         
         # 3. Markdown Export (for copy-paste to AI)
         md_file = run_output / f"{base_name}.md"
@@ -372,7 +476,7 @@ class SimpleResultsExporter:
             f.write("- Duration in seconds per evaluation\n")
         
         exported_files['markdown'] = str(md_file)
-        print(f"✅ Markdown exported: {md_file.name}")
+        print(f" Markdown exported: {md_file.name}")
         
         # 4. Simple HTML Export (for quick viewing)
         html_file = run_output / f"{base_name}.html"
@@ -385,7 +489,7 @@ class SimpleResultsExporter:
             run_folder = self.eval_metadata.get('run_folder', 'Unknown')
             eval_context = f"""
     <div style="background-color: #f0f8ff; padding: 15px; margin: 20px 0; border-radius: 5px;">
-        <h3>📊 Evaluation Context</h3>
+        <h3> Evaluation Context</h3>
         <p><strong>Type:</strong> {eval_type}</p>
         <p><strong>Run:</strong> {run_folder}</p>
         <p><strong>Total Cost:</strong> ${cost:.4f}</p>
@@ -420,9 +524,9 @@ class SimpleResultsExporter:
     
     <h2>Export Files</h2>
     <ul>
-        <li>📊 <strong>CSV:</strong> Import into Excel or Google Sheets</li>
-        <li>🔗 <strong>JSON:</strong> Use in web applications and APIs</li>
-        <li>📝 <strong>Markdown:</strong> Copy-paste to AI assistants for analysis</li>
+        <li> <strong>CSV:</strong> Import into Excel or Google Sheets</li>
+        <li> <strong>JSON:</strong> Use in web applications and APIs</li>
+        <li> <strong>Markdown:</strong> Copy-paste to AI assistants for analysis</li>
     </ul>
     
     <h2>File Organization</h2>
@@ -433,7 +537,7 @@ class SimpleResultsExporter:
         with open(html_file, 'w', encoding='utf-8') as f:
             f.write(html_content)
         exported_files['html'] = str(html_file)
-        print(f"✅ HTML exported: {html_file.name}")
+        print(f" HTML exported: {html_file.name}")
         
         # Create a README for the export folder
         readme_file = run_output / "README.md"
@@ -452,26 +556,26 @@ class SimpleResultsExporter:
                 f.write(f"- Duration: {self.eval_metadata.get('total_duration', 0):.1f} minutes\n")
         
         exported_files['readme'] = str(readme_file)
-        print(f"✅ README created: {readme_file.name}")
+        print(f" README created: {readme_file.name}")
         
         return exported_files
     
     def print_summary(self, df: pd.DataFrame):
         """Print a nice summary of the results."""
         print("\n" + "="*80)
-        print("🏆 SMALMS EVALUATION SUMMARY")
+        print(" SMALMS EVALUATION SUMMARY")
         print("="*80)
         
         if df.empty:
             print("No results to display")
             return
         
-        print(f"📊 {len(df)} models evaluated")
-        print(f"🎯 Best accuracy: {df['Overall_Accuracy'].max():.3f} ({df.loc[df['Overall_Accuracy'].idxmax(), 'Model']})")
-        print(f"💰 Total cost: ${df['Total_Cost'].sum():.4f}")
-        print(f"⚡ Most efficient: {df.loc[df['Cost_Efficiency'].idxmax(), 'Model']}")
+        print(f" {len(df)} models evaluated")
+        print(f" Best accuracy: {df['Overall_Accuracy'].max():.3f} ({df.loc[df['Overall_Accuracy'].idxmax(), 'Model']})")
+        print(f" Total cost: ${df['Total_Cost'].sum():.4f}")
+        print(f" Most efficient: {df.loc[df['Cost_Efficiency'].idxmax(), 'Model']}")
         
-        print(f"\n📋 TOP 5 MODELS:")
+        print(f"\n TOP 5 MODELS:")
         print("-"*60)
         top_5 = df.head(5)
         for i, (_, row) in enumerate(top_5.iterrows(), 1):
@@ -480,7 +584,7 @@ class SimpleResultsExporter:
         # Show benchmark breakdown if available
         benchmark_cols = [col for col in df.columns if col.isupper() and len(col) <= 10]
         if benchmark_cols:
-            print(f"\n📈 BENCHMARK PERFORMANCE:")
+            print(f"\n BENCHMARK PERFORMANCE:")
             print("-"*60)
             for benchmark in benchmark_cols:
                 if benchmark in df.columns and df[benchmark].max() > 0:
@@ -489,7 +593,7 @@ class SimpleResultsExporter:
 
 def main():
     """Main function."""
-    print("📊 smaLLMs Simple Results Exporter")
+    print(" smaLLMs Simple Results Exporter")
     print("="*50)
     
     exporter = SimpleResultsExporter()
@@ -499,8 +603,8 @@ def main():
     results = data.get('results', [])
     
     if not results:
-        print("❌ No evaluation results found!")
-        print("💡 Run some evaluations first using the intelligent evaluator.")
+        print(" No evaluation results found!")
+        print(" Run some evaluations first using the intelligent evaluator.")
         return
     
     # Create leaderboard
@@ -513,12 +617,12 @@ def main():
     exported_files = exporter.export_for_website()
     
     if exported_files:
-        print(f"\n🎯 EXPORT COMPLETE!")
+        print(f"\n EXPORT COMPLETE!")
         print("="*50)
         for file_type, file_path in exported_files.items():
-            print(f"📄 {file_type.upper()}: {Path(file_path).name}")
+            print(f" {file_type.upper()}: {Path(file_path).name}")
         
-        print(f"\n💡 Next Steps:")
+        print(f"\n Next Steps:")
         print("1. Open the HTML file to view results in browser")
         print("2. Copy the JSON file to your website project")
         print("3. Use the Markdown file with AI assistants for analysis")
