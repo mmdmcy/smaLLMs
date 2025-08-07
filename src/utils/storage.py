@@ -48,6 +48,7 @@ class ResultStorage:
         self.results_dir = Path('results')
         self.cache_dir = Path('results/cache')
         self.leaderboard_dir = Path('results/leaderboards')
+        self.models_dir = Path('results/models')  # New organized storage
         
         # Create directories
         self._create_directories()
@@ -101,7 +102,7 @@ class ResultStorage:
     
     def _create_directories(self):
         """Create necessary directories."""
-        for directory in [self.results_dir, self.cache_dir, self.leaderboard_dir]:
+        for directory in [self.results_dir, self.cache_dir, self.leaderboard_dir, self.models_dir]:
             directory.mkdir(parents=True, exist_ok=True)
     
     async def save_result(self, result, session_id: str = None) -> str:
@@ -192,8 +193,22 @@ class ResultStorage:
         return file_path
     
     def _save_local_result_cache(self, result, filename: str) -> Path:
-        """Save result in cache directory for backward compatibility with comprehensive statistics."""
-        file_path = self.cache_dir / filename
+        """Save result in organized model-specific directories with timestamps."""
+        
+        # Extract model name from result
+        model_name = result.model_name if hasattr(result, 'model_name') else 'unknown_model'
+        benchmark_name = result.benchmark_name if hasattr(result, 'benchmark_name') else 'unknown_benchmark'
+        
+        # Create organized directory structure: results/models/{model_name}/{timestamp}/
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_dir = self.results_dir / "models" / model_name.replace(":", "_").replace("/", "_") / timestamp
+        model_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save in organized location
+        organized_file_path = model_dir / f"{model_name.replace(':', '_')}_{benchmark_name}_{timestamp}.json"
+        
+        # Also save in cache for backward compatibility (but will eventually phase this out)
+        cache_file_path = self.cache_dir / filename
         
         # Use enhanced to_dict method if available, otherwise fallback to basic dict
         if hasattr(result, 'to_dict'):
@@ -215,11 +230,17 @@ class ResultStorage:
                 'error': result.error
             }
         
-        with open(file_path, 'w') as f:
+        # Save to organized location (primary)
+        with open(organized_file_path, 'w') as f:
             json.dump(result_dict, f, indent=2)
         
-        self.logger.info(f"Saved result cache: {file_path}")
-        return file_path
+        # Save to cache (backward compatibility)
+        with open(cache_file_path, 'w') as f:
+            json.dump(result_dict, f, indent=2)
+        
+        self.logger.info(f"Saved result to organized location: {organized_file_path}")
+        self.logger.info(f"Saved result cache: {cache_file_path}")
+        return organized_file_path
     
     def _save_local_result(self, result, filename: str) -> Path:
         """Save result locally in specified format (legacy method)."""
