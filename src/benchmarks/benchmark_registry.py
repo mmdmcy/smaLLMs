@@ -563,6 +563,43 @@ class AIMEBenchmark(BaseBenchmark):
         self.logger.info(f"AIME evaluation completed: {len(results)} samples")
         return results
     
+    def extract_numerical_answer(self, text: str) -> str:
+        """Extract numerical answer from response."""
+        # Look for boxed answers first (LaTeX style)
+        boxed_match = re.search(r'\\boxed\{([^}]+)\}', text)
+        if boxed_match:
+            # Extract number from boxed content
+            boxed_content = boxed_match.group(1)
+            number_in_box = re.search(r'([+-]?\d+(?:\.\d+)?)', boxed_content)
+            if number_in_box:
+                return number_in_box.group(1)
+        
+        # Look for explicit answer patterns
+        patterns = [
+            r'[Tt]he answer is\s*([+-]?\d+(?:\.\d+)?)',
+            r'[Aa]nswer:\s*([+-]?\d+(?:\.\d+)?)',
+            r'Final answer:\s*([+-]?\d+(?:\.\d+)?)',
+            r'Result:\s*([+-]?\d+(?:\.\d+)?)',
+            r'Solution:\s*([+-]?\d+(?:\.\d+)?)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        
+        # Look for numbers at the end of the response
+        end_number = re.search(r'([+-]?\d+(?:\.\d+)?)\s*$', text.strip())
+        if end_number:
+            return end_number.group(1)
+        
+        # Look for any number in the response as fallback
+        number_match = re.search(r'([+-]?\d+(?:\.\d+)?)', text)
+        if number_match:
+            return number_match.group(1)
+        
+        return "0"  # Default fallback
+    
     def get_benchmark_info(self) -> Dict[str, Any]:
         return {
             "name": f"AIME {self.year}",
