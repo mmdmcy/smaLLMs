@@ -347,6 +347,24 @@ python smaLLMs.py
 
 ---
 
+## 🛠️ Technical Architecture & Engineering Highlights
+
+*Engineered for performance, reliability, and extensibility.*
+
+### 🧠 Intelligent Orchestration Engine
+- **Adaptive Sampling Algorithm**: Implements a dynamic confidence-based sampling strategy. Instead of fixed sample sizes, the system analyzes real-time model reliability and accuracy to automatically adjust evaluation depth—increasing samples for promising models while "fail-fast" logic minimizes resource waste on poor performers.
+- **AsyncIO Concurrency**: Built on Python's `asyncio` event loop for non-blocking I/O. Uses `aiohttp` for high-concurrency API requests, enabling parallel evaluation of multiple models while maintaining responsive UI updates.
+- **Resource-Aware Scheduling**: Features an intelligent scheduler that manages system resources, enforcing rate limits (token bucket strategy) and implementing progressive timeouts that adapt to local inference latencies vs. cloud API speeds.
+
+### 🏗️ Robust System Design
+- **Unified Provider Abstraction**: Implements the **Strategy-Adapter Pattern** to normalize interfaces across disparate backends. Whether communicating with a local Ollama instance via REST, an LM Studio server, or the HuggingFace Cloud API, the core `ModelManager` treats them uniformly.
+- **Resilient Error Handling**: "Marathon Mode" is built with fault tolerance at its core. It includes automatic session recovery, checkpointing (serialization of intermediate states), and comprehensive exception handling to ensure overnight runs complete successfully even if individual models crash.
+- **Modular Benchmark System**: Uses a **Factory Pattern** for dynamic benchmark loading, allowing new test suites to be plugged in without modifying core orchestration logic.
+
+### 📊 Data & Analytics Pipeline
+- **Real-time Analytics**: Computes streaming metrics including "Reliability Score" (0-1 confidence metric) and "Value Score" (Accuracy per Dollar) during execution.
+- **Structured Serialization**: Results are serialized into a hierarchical JSON structure with full metadata preservation, enabling historical trend analysis and long-term regression testing.
+
 ## Contributing
 
 Help make smaLLMs even better:
