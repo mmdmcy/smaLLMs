@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """
 smaLLMs Simple Results Exporter
 ==============================
@@ -6,8 +7,12 @@ Clean, simple tool to export evaluation results for your website.
 """
 
 import json
-import pandas as pd
-import numpy as np
+try:
+    import pandas as pd
+    import numpy as np
+except ModuleNotFoundError:
+    pd = None
+    np = None
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -602,6 +607,22 @@ class SimpleResultsExporter:
 
 def main():
     """Main function."""
+    try:
+        from src.pipeline.exporter import WebsiteExporter
+
+        modern_exporter = WebsiteExporter()
+        exported_files = modern_exporter.export_run()
+        if exported_files:
+            print(" smaLLMs Website Export")
+            print("=" * 50)
+            for file_type, file_path in exported_files.items():
+                print(f" {file_type}: {Path(file_path).name}")
+            return
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        print(f"Modern export path unavailable, falling back to legacy exporter: {exc}")
+
     print(" smaLLMs Simple Results Exporter")
     print("="*50)
     

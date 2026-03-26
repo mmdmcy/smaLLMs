@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from huggingface_hub import InferenceClient
 import logging
+from datetime import datetime, timezone
 
 @dataclass
 class ModelInfo:
@@ -31,6 +32,8 @@ class ModelInfo:
     supports_vision: bool = False
     model_type: str = "text"  # text, vision, code
     local_path: Optional[str] = None
+    family: str = "unknown"
+    quantization: str = "unknown"
 
 @dataclass
 class GenerationConfig:
@@ -42,12 +45,34 @@ class GenerationConfig:
     presence_penalty: float = 0.0
     stop_sequences: List[str] = None
 
+
+@dataclass
+class GenerationResult:
+    """Normalized generation output with provider metadata."""
+
+    text: str
+    prompt: str
+    started_at: str
+    ended_at: str
+    latency_sec: float
+    provider: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    load_duration_sec: float = 0.0
+    prompt_eval_duration_sec: float = 0.0
+    eval_duration_sec: float = 0.0
+    total_duration_sec: float = 0.0
+    tokens_per_second: float = 0.0
+    raw: Optional[Dict[str, Any]] = None
+
 class BaseModel(ABC):
     """Abstract base class for all model implementations."""
     
-    def __init__(self, model_name: str, config: Dict):
+    def __init__(self, model_name: str, config: Dict, metadata: Optional[Dict[str, Any]] = None):
         self.model_name = model_name
         self.config = config
+        self.metadata = metadata or {}
         self.logger = logging.getLogger(f"{__name__}.{model_name}")
     
     @abstractmethod
@@ -65,11 +90,44 @@ class BaseModel(ABC):
         """Get information about the model."""
         pass
 
+    async def generate_with_metadata(
+        self,
+        prompt: str,
+        generation_config: GenerationConfig,
+    ) -> GenerationResult:
+        """Generate text plus normalized metadata."""
+        started = datetime.now(timezone.utc).isoformat()
+        start_time = time.time()
+        text = await self.generate(prompt, generation_config)
+        latency_sec = time.time() - start_time
+        ended = datetime.now(timezone.utc).isoformat()
+        model_info = self.get_model_info()
+        return GenerationResult(
+            text=text,
+            prompt=prompt,
+            started_at=started,
+            ended_at=ended,
+            latency_sec=latency_sec,
+            total_duration_sec=latency_sec,
+            provider=model_info.provider,
+        )
+
+    async def batch_generate_with_metadata(
+        self,
+        prompts: List[str],
+        generation_config: GenerationConfig,
+    ) -> List[GenerationResult]:
+        """Sequential metadata-aware generation fallback."""
+        results = []
+        for prompt in prompts:
+            results.append(await self.generate_with_metadata(prompt, generation_config))
+        return results
+
 class HuggingFaceModel(BaseModel):
     """Hugging Face Inference Providers model implementation."""
     
-    def __init__(self, model_name: str, config: Dict):
-        super().__init__(model_name, config)
+    def __init__(self, model_name: str, config: Dict, metadata: Optional[Dict[str, Any]] = None):
+        super().__init__(model_name, config, metadata=metadata)
         hf_config = config.get('huggingface', {})
         self.token = hf_config.get('token')
         
@@ -79,74 +137,133 @@ class HuggingFaceModel(BaseModel):
             provider="auto"  # Let HF choose the best provider automatically
         )
         self.max_retries = hf_config.get('inference_endpoints', {}).get('max_retries', 3)
-    
-    async def generate(self, prompt: str, generation_config: GenerationConfig) -> str:
-        """Generate text using HF Inference Providers Chat Completions API only."""
+
+    async def generate_with_metadata(
+        self,
+        prompt: str,
+        generation_config: GenerationConfig,
+    ) -> GenerationResult:
+        """Generate text using HF chat completions with usage metadata when available."""
+        started = datetime.now(timezone.utc).isoformat()
+        start_time = time.time()
+
         for attempt in range(self.max_retries):
             try:
-                # Use the modern chat completions API
                 completion = self.client.chat.completions.create(
                     model=self.model_name,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
+                    messages=[{"role": "user", "content": prompt}],
                     max_tokens=generation_config.max_tokens,
                     temperature=generation_config.temperature,
                     top_p=generation_config.top_p,
-                    stop=generation_config.stop_sequences or []
+                    stop=generation_config.stop_sequences or [],
                 )
-                
-                # Extract content from the response
+
                 if completion.choices and len(completion.choices) > 0:
-                    content = completion.choices[0].message.content
-                    if content and content.strip():
-                        return content.strip()
-                    else:
-                        self.logger.warning(f"Model {self.model_name} returned empty content in attempt {attempt + 1}")
-                        if attempt == self.max_retries - 1:
-                            self.logger.error(f"Model {self.model_name} consistently returns empty responses - not compatible with chat completions API")
-                        return ""
-                else:
-                    self.logger.warning(f"Model {self.model_name} returned no choices in attempt {attempt + 1}")
-                    if attempt == self.max_retries - 1:
-                        self.logger.error(f"Model {self.model_name} consistently returns no choices - API compatibility issue")
-                    return ""
-            
+                    content = completion.choices[0].message.content or ""
+                    ended = datetime.now(timezone.utc).isoformat()
+                    latency_sec = time.time() - start_time
+                    usage = getattr(completion, "usage", None)
+                    prompt_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
+                    completion_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+                    total_tokens = getattr(usage, "total_tokens", prompt_tokens + completion_tokens) if usage else 0
+
+                    return GenerationResult(
+                        text=content.strip(),
+                        prompt=prompt,
+                        started_at=started,
+                        ended_at=ended,
+                        latency_sec=latency_sec,
+                        total_duration_sec=latency_sec,
+                        provider="huggingface",
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
+                        tokens_per_second=(completion_tokens / latency_sec) if latency_sec > 0 else 0.0,
+                        raw=completion.model_dump() if hasattr(completion, "model_dump") else None,
+                    )
+
+                self.logger.warning(f"Model {self.model_name} returned no choices in attempt {attempt + 1}")
+                return GenerationResult(
+                    text="",
+                    prompt=prompt,
+                    started_at=started,
+                    ended_at=datetime.now(timezone.utc).isoformat(),
+                    latency_sec=time.time() - start_time,
+                    total_duration_sec=time.time() - start_time,
+                    provider="huggingface",
+                )
+
             except Exception as e:
-                error_msg = str(e)
                 error_type = type(e).__name__
-                
-                # StopIteration typically means the model doesn't support chat completions
+                error_msg = str(e)
                 if error_type == "StopIteration":
-                    self.logger.error(f"Model {self.model_name} doesn't support chat completions API (StopIteration). Use instruction-tuned models only.")
-                    return ""
-                
-                self.logger.warning(f"Chat API attempt {attempt + 1} failed for {self.model_name}: {error_type}: {error_msg}")
+                    self.logger.error(
+                        f"Model {self.model_name} doesn't support chat completions API (StopIteration). "
+                        "Use instruction-tuned models only."
+                    )
+                    break
+
+                self.logger.warning(
+                    f"Chat API attempt {attempt + 1} failed for {self.model_name}: "
+                    f"{error_type}: {error_msg}"
+                )
                 if attempt == self.max_retries - 1:
-                    self.logger.error(f"All {self.max_retries} attempts failed for {self.model_name}. Final error: {error_type}: {error_msg}")
-                    return ""
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
-        
-        return ""
+                    break
+                await asyncio.sleep(2 ** attempt)
+
+        ended = datetime.now(timezone.utc).isoformat()
+        latency_sec = time.time() - start_time
+        return GenerationResult(
+            text="",
+            prompt=prompt,
+            started_at=started,
+            ended_at=ended,
+            latency_sec=latency_sec,
+            total_duration_sec=latency_sec,
+            provider="huggingface",
+            raw={"error": f"Failed after {self.max_retries} attempts"},
+        )
+    
+    async def generate(self, prompt: str, generation_config: GenerationConfig) -> str:
+        """Generate text using HF Inference Providers Chat Completions API only."""
+        result = await self.generate_with_metadata(prompt, generation_config)
+        return result.text
     
     async def batch_generate(self, prompts: List[str], generation_config: GenerationConfig) -> List[str]:
+        """Generate text for multiple prompts with rate limiting."""
+        batch_results = await self.batch_generate_with_metadata(prompts, generation_config)
+        return [result.text for result in batch_results]
+
+    async def batch_generate_with_metadata(
+        self,
+        prompts: List[str],
+        generation_config: GenerationConfig,
+    ) -> List[GenerationResult]:
         """Generate text for multiple prompts with rate limiting."""
         batch_size = self.config.get('huggingface', {}).get('inference_endpoints', {}).get('batch_size', 10)
         
         results = []
         for i in range(0, len(prompts), batch_size):
             batch = prompts[i:i + batch_size]
-            batch_tasks = [self.generate(prompt, generation_config) for prompt in batch]
+            batch_tasks = [self.generate_with_metadata(prompt, generation_config) for prompt in batch]
             batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
             
             # Handle exceptions in batch
             for result in batch_results:
                 if isinstance(result, Exception):
                     self.logger.error(f"Batch generation error: {str(result)}")
-                    results.append("")  # Empty string for failed generations
+                    results.append(
+                        GenerationResult(
+                            text="",
+                            prompt="",
+                            started_at=datetime.now(timezone.utc).isoformat(),
+                            ended_at=datetime.now(timezone.utc).isoformat(),
+                            latency_sec=0.0,
+                            total_duration_sec=0.0,
+                            provider="huggingface",
+                            raw={"error": str(result)},
+                        )
+                    )
                 else:
                     results.append(result)
             
@@ -179,14 +296,16 @@ class HuggingFaceModel(BaseModel):
             architecture="transformer",
             license="unknown",
             cost_per_token=0.0001 if size < 7 else 0.0002,  # Rough HF pricing
-            max_context=2048
+            max_context=2048,
+            family=self.metadata.get("family", "unknown"),
+            quantization=self.metadata.get("quantization", "unknown"),
         )
 
 class OllamaModel(BaseModel):
     """Local Ollama model implementation with vision support."""
     
-    def __init__(self, model_name: str, config: Dict):
-        super().__init__(model_name, config)
+    def __init__(self, model_name: str, config: Dict, metadata: Optional[Dict[str, Any]] = None):
+        super().__init__(model_name, config, metadata=metadata)
         self.base_url = config.get('ollama', {}).get('base_url', 'http://localhost:11434')
         self.session = None
         self.supports_vision = self._detect_vision_support()
@@ -233,8 +352,22 @@ class OllamaModel(BaseModel):
             self.logger.error(f"Failed to encode image {image_path}: {e}")
             return ""
     
-    async def generate(self, prompt: str, generation_config: GenerationConfig, image_path: Optional[str] = None) -> str:
-        """Generate text using local Ollama instance with optional image support."""
+    def _duration_ns_to_sec(self, value: Any) -> float:
+        """Convert Ollama nanosecond duration values to seconds."""
+        try:
+            if value is None:
+                return 0.0
+            return float(value) / 1_000_000_000
+        except (TypeError, ValueError):
+            return 0.0
+
+    async def _request_generate(
+        self,
+        prompt: str,
+        generation_config: GenerationConfig,
+        image_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate a raw Ollama response payload."""
         session = await self._get_session()
         
         # First check if model is available
@@ -245,7 +378,7 @@ class OllamaModel(BaseModel):
                     available_models = [model['name'] for model in tags_data.get('models', [])]
                     if self.model_name not in available_models:
                         self.logger.error(f"Model {self.model_name} not found. Available models: {available_models}")
-                        return ""
+                        return {"response": "", "error": "model_not_found"}
         except Exception as e:
             self.logger.warning(f"Could not check available models: {e}")
         
@@ -259,7 +392,7 @@ class OllamaModel(BaseModel):
                 "stop": generation_config.stop_sequences or []
             },
             "stream": False,
-            "keep_alive": "10m"  # Keep model loaded for 10 minutes to avoid reload delays
+                "keep_alive": "10m"  # Keep model loaded for 10 minutes to avoid reload delays
         }
         
         # Add image if provided and model supports vision
@@ -292,22 +425,24 @@ class OllamaModel(BaseModel):
                 async with session.post(f"{self.base_url}/api/generate", json=payload, timeout=timeout) as response:
                     if response.status == 404:
                         self.logger.error(f"Model {self.model_name} not found in Ollama. Is it pulled?")
-                        return ""
+                        return {"response": "", "error": "model_not_found"}
                     elif response.status == 500:
                         error_text = await response.text()
                         self.logger.error(f"Ollama server error: {error_text}")
-                        return ""
+                        return {"response": "", "error": error_text}
                         
                     response.raise_for_status()
                     result = await response.json()
                     response_text = result.get("response", "").strip()
-                    
-                    # Add debugging to see what we're getting
-                    self.logger.info(f"Ollama response for {self.model_name}: status={response.status}, response_length={len(response_text)}")
+
+                    self.logger.info(
+                        f"Ollama response for {self.model_name}: status={response.status}, "
+                        f"response_length={len(response_text)}"
+                    )
                     if not response_text:
                         self.logger.warning(f"Empty response from Ollama for {self.model_name}: {result}")
-                    
-                    return response_text
+
+                    return result
             
             except asyncio.TimeoutError:
                 if attempt < max_retries:
@@ -316,17 +451,70 @@ class OllamaModel(BaseModel):
                     await asyncio.sleep(wait_time)
                 else:
                     self.logger.error(f"Ollama generation timeout for model {self.model_name} after {max_retries + 1} attempts with final timeout of {current_timeout}s")
-                    return ""
+                    return {"response": "", "error": "timeout"}
             except aiohttp.ClientError as e:
                 self.logger.error(f"Ollama connection error: {str(e)}")
-                return ""
+                return {"response": "", "error": str(e)}
             except Exception as e:
                 self.logger.error(f"Ollama generation error: {str(e)}")
-                return ""
+                return {"response": "", "error": str(e)}
         
-        return ""
+        return {"response": "", "error": "unknown"}
+
+    async def generate_with_metadata(
+        self,
+        prompt: str,
+        generation_config: GenerationConfig,
+        image_path: Optional[str] = None,
+    ) -> GenerationResult:
+        """Generate text using local Ollama instance with normalized metadata."""
+        started = datetime.now(timezone.utc).isoformat()
+        start_time = time.time()
+        raw = await self._request_generate(prompt, generation_config, image_path=image_path)
+        latency_sec = time.time() - start_time
+        ended = datetime.now(timezone.utc).isoformat()
+
+        prompt_tokens = int(raw.get("prompt_eval_count") or 0)
+        completion_tokens = int(raw.get("eval_count") or 0)
+        eval_duration_sec = self._duration_ns_to_sec(raw.get("eval_duration"))
+        prompt_eval_duration_sec = self._duration_ns_to_sec(raw.get("prompt_eval_duration"))
+        load_duration_sec = self._duration_ns_to_sec(raw.get("load_duration"))
+        total_duration_sec = self._duration_ns_to_sec(raw.get("total_duration")) or latency_sec
+
+        return GenerationResult(
+            text=(raw.get("response") or "").strip(),
+            prompt=prompt,
+            started_at=started,
+            ended_at=ended,
+            latency_sec=latency_sec,
+            total_duration_sec=total_duration_sec,
+            provider="ollama",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            load_duration_sec=load_duration_sec,
+            prompt_eval_duration_sec=prompt_eval_duration_sec,
+            eval_duration_sec=eval_duration_sec,
+            tokens_per_second=(completion_tokens / eval_duration_sec) if eval_duration_sec > 0 else 0.0,
+            raw=raw,
+        )
+
+    async def generate(self, prompt: str, generation_config: GenerationConfig, image_path: Optional[str] = None) -> str:
+        """Generate text using local Ollama instance with optional image support."""
+        result = await self.generate_with_metadata(prompt, generation_config, image_path=image_path)
+        return result.text
     
     async def batch_generate(self, prompts: List[str], generation_config: GenerationConfig, image_paths: Optional[List[str]] = None) -> List[str]:
+        """Generate text for multiple prompts with optional images - resource-aware sequential processing."""
+        batch_results = await self.batch_generate_with_metadata(prompts, generation_config, image_paths=image_paths)
+        return [result.text for result in batch_results]
+
+    async def batch_generate_with_metadata(
+        self,
+        prompts: List[str],
+        generation_config: GenerationConfig,
+        image_paths: Optional[List[str]] = None,
+    ) -> List[GenerationResult]:
         """Generate text for multiple prompts with optional images - resource-aware sequential processing."""
         results = []
         
@@ -344,18 +532,18 @@ class OllamaModel(BaseModel):
             
             try:
                 self.logger.debug(f"Generating response {i+1}/{len(prompts)} for model {self.model_name}")
-                result = await self.generate(prompt, generation_config, image_path)
+                result = await self.generate_with_metadata(prompt, generation_config, image_path)
                 
-                if not result:
+                if not result.text:
                     self.logger.warning(f"Empty result for prompt {i+1} with model {self.model_name}")
                 else:
-                    self.logger.debug(f"Got response {i+1}/{len(prompts)}: '{result[:50]}...'")
+                    self.logger.debug(f"Got response {i+1}/{len(prompts)}: '{result.text[:50]}...'")
                 
                 results.append(result)
                 
                 # Progress checkpoint every N items
                 if (i + 1) % checkpoint_interval == 0:
-                    success_count = sum(1 for r in results if r)
+                    success_count = sum(1 for r in results if r.text)
                     self.logger.info(f"Progress checkpoint: {i+1}/{len(prompts)} completed, {success_count} successful")
                 
                 # Resource-friendly delay between requests
@@ -364,41 +552,58 @@ class OllamaModel(BaseModel):
                     
             except Exception as e:
                 self.logger.warning(f"Error in batch generation item {i+1}: {e}")
-                results.append("")
+                results.append(
+                    GenerationResult(
+                        text="",
+                        prompt=prompt,
+                        started_at=datetime.now(timezone.utc).isoformat(),
+                        ended_at=datetime.now(timezone.utc).isoformat(),
+                        latency_sec=0.0,
+                        total_duration_sec=0.0,
+                        provider="ollama",
+                        raw={"error": str(e)},
+                    )
+                )
                 
                 # On error, add extra delay to let slow system recover
                 await asyncio.sleep(batch_delay * 3)  # Even longer recovery time for slow hardware
         
-        success_count = sum(1 for r in results if r)
+        success_count = sum(1 for r in results if r.text)
         success_rate = success_count / len(results) * 100 if results else 0
         self.logger.info(f"Batch generation completed: {success_count}/{len(results)} successful ({success_rate:.1f}%)")
         return results
     
     def get_model_info(self) -> ModelInfo:
         """Get local model information."""
+        size_gb = float(self.metadata.get("size_gb", 2.0) or 2.0)
+        parameters = self.metadata.get("parameters") or self.metadata.get("parameter_size") or "unknown"
         return ModelInfo(
             name=self.model_name,
             provider="ollama",
-            size_gb=2.0,  # Default estimate
-            parameters="unknown",
+            size_gb=size_gb,
+            parameters=parameters,
             architecture="transformer",
             license="unknown",
             cost_per_token=0.0,  # Local execution is free
             max_context=2048,
             supports_vision=self.supports_vision,
-            model_type="vision" if self.supports_vision else "text"
+            model_type="vision" if self.supports_vision else "text",
+            family=self.metadata.get("family", "unknown"),
+            quantization=self.metadata.get("quantization", "unknown"),
         )
     
     async def close(self):
-        """Close the aiohttp session."""
+        """Close the aiohttp session and unload the current model."""
+        await self.unload_model()
         if self.session:
             await self.session.close()
+            self.session = None
 
 class LMStudioModel(BaseModel):
     """Local LM Studio model implementation with vision support."""
     
-    def __init__(self, model_name: str, config: Dict):
-        super().__init__(model_name, config)
+    def __init__(self, model_name: str, config: Dict, metadata: Optional[Dict[str, Any]] = None):
+        super().__init__(model_name, config, metadata=metadata)
         self.base_url = config.get('lm_studio', {}).get('base_url', 'http://localhost:1234')
         self.session = None
         self.supports_vision = self._detect_vision_support()
@@ -443,9 +648,16 @@ class LMStudioModel(BaseModel):
             self.logger.error(f"Failed to encode image {image_path}: {e}")
             return ""
     
-    async def generate(self, prompt: str, generation_config: GenerationConfig, image_path: Optional[str] = None) -> str:
+    async def generate_with_metadata(
+        self,
+        prompt: str,
+        generation_config: GenerationConfig,
+        image_path: Optional[str] = None,
+    ) -> GenerationResult:
         """Generate text using LM Studio's OpenAI-compatible API."""
         session = await self._get_session()
+        started = datetime.now(timezone.utc).isoformat()
+        start_time = time.time()
         
         # Prepare messages for chat completion
         messages = []
@@ -485,20 +697,91 @@ class LMStudioModel(BaseModel):
                     result = await response.json()
                     if result.get("choices") and len(result["choices"]) > 0:
                         content = result["choices"][0]["message"]["content"]
-                        return content.strip() if content else ""
+                        usage = result.get("usage") or {}
+                        latency_sec = time.time() - start_time
+                        ended = datetime.now(timezone.utc).isoformat()
+                        completion_tokens = int(usage.get("completion_tokens") or 0)
+                        return GenerationResult(
+                            text=content.strip() if content else "",
+                            prompt=prompt,
+                            started_at=started,
+                            ended_at=ended,
+                            latency_sec=latency_sec,
+                            total_duration_sec=latency_sec,
+                            provider="lm_studio",
+                            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                            completion_tokens=completion_tokens,
+                            total_tokens=int(usage.get("total_tokens") or 0),
+                            tokens_per_second=(completion_tokens / latency_sec) if latency_sec > 0 else 0.0,
+                            raw=result,
+                        )
                     else:
                         self.logger.warning(f"LM Studio returned no choices for {self.model_name}")
-                        return ""
+                        return GenerationResult(
+                            text="",
+                            prompt=prompt,
+                            started_at=started,
+                            ended_at=datetime.now(timezone.utc).isoformat(),
+                            latency_sec=time.time() - start_time,
+                            total_duration_sec=time.time() - start_time,
+                            provider="lm_studio",
+                            raw=result,
+                        )
                 else:
                     error_text = await response.text()
                     self.logger.error(f"LM Studio API error {response.status}: {error_text}")
-                    return ""
+                    return GenerationResult(
+                        text="",
+                        prompt=prompt,
+                        started_at=started,
+                        ended_at=datetime.now(timezone.utc).isoformat(),
+                        latency_sec=time.time() - start_time,
+                        total_duration_sec=time.time() - start_time,
+                        provider="lm_studio",
+                        raw={"error": error_text, "status": response.status},
+                    )
         
         except Exception as e:
             self.logger.error(f"LM Studio generation error: {str(e)}")
-            return ""
+            return GenerationResult(
+                text="",
+                prompt=prompt,
+                started_at=started,
+                ended_at=datetime.now(timezone.utc).isoformat(),
+                latency_sec=time.time() - start_time,
+                total_duration_sec=time.time() - start_time,
+                provider="lm_studio",
+                raw={"error": str(e)},
+            )
+
+        ended = datetime.now(timezone.utc).isoformat()
+        latency_sec = time.time() - start_time
+        return GenerationResult(
+            text="",
+            prompt=prompt,
+            started_at=started,
+            ended_at=ended,
+            latency_sec=latency_sec,
+            total_duration_sec=latency_sec,
+            provider="lm_studio",
+        )
+
+    async def generate(self, prompt: str, generation_config: GenerationConfig, image_path: Optional[str] = None) -> str:
+        """Generate text using LM Studio's OpenAI-compatible API."""
+        result = await self.generate_with_metadata(prompt, generation_config, image_path=image_path)
+        return result.text
     
     async def batch_generate(self, prompts: List[str], generation_config: GenerationConfig, image_paths: Optional[List[str]] = None) -> List[str]:
+        """Generate text for multiple prompts - sequential for local models."""
+        batch_results = await self.batch_generate_with_metadata(prompts, generation_config, image_paths=image_paths)
+        return [result.text for result in batch_results]
+
+    async def batch_generate_with_metadata(
+        self,
+        prompts: List[str],
+        generation_config: GenerationConfig,
+        image_paths: Optional[List[str]] = None,
+    ) -> List[GenerationResult]:
         """Generate text for multiple prompts - sequential for local models."""
         results = []
         
@@ -512,12 +795,12 @@ class LMStudioModel(BaseModel):
             
             try:
                 self.logger.debug(f"LM Studio generating response {i+1}/{len(prompts)} for model {self.model_name}")
-                result = await self.generate(prompt, generation_config, image_path)
+                result = await self.generate_with_metadata(prompt, generation_config, image_path)
                 
-                if not result:
+                if not result.text:
                     self.logger.warning(f"Empty result for LM Studio prompt {i+1} with model {self.model_name}")
                 else:
-                    self.logger.debug(f"LM Studio got response {i+1}/{len(prompts)}: '{result[:50]}...'")
+                    self.logger.debug(f"LM Studio got response {i+1}/{len(prompts)}: '{result.text[:50]}...'")
                 
                 results.append(result)
                 
@@ -527,9 +810,20 @@ class LMStudioModel(BaseModel):
                     
             except Exception as e:
                 self.logger.warning(f"Error in LM Studio batch generation item {i+1}: {e}")
-                results.append("")
+                results.append(
+                    GenerationResult(
+                        text="",
+                        prompt=prompt,
+                        started_at=datetime.now(timezone.utc).isoformat(),
+                        ended_at=datetime.now(timezone.utc).isoformat(),
+                        latency_sec=0.0,
+                        total_duration_sec=0.0,
+                        provider="lm_studio",
+                        raw={"error": str(e)},
+                    )
+                )
         
-        success_count = sum(1 for r in results if r)
+        success_count = sum(1 for r in results if r.text)
         self.logger.info(f"LM Studio batch generation completed: {success_count}/{len(results)} successful responses")
         return results
     
@@ -538,20 +832,24 @@ class LMStudioModel(BaseModel):
         return ModelInfo(
             name=self.model_name,
             provider="lm_studio",
-            size_gb=2.0,  # Default estimate
-            parameters="unknown",
+            size_gb=float(self.metadata.get("size_gb", 0.0) or 0.0),
+            parameters=self.metadata.get("parameters", "unknown"),
             architecture="transformer",
             license="unknown",
             cost_per_token=0.0,  # Local execution is free
             max_context=4096,  # LM Studio typically has higher context
             supports_vision=self.supports_vision,
-            model_type="vision" if self.supports_vision else "text"
+            model_type="vision" if self.supports_vision else "text",
+            family=self.metadata.get("family", "unknown"),
+            quantization=self.metadata.get("quantization", "unknown"),
         )
     
     async def close(self):
-        """Close the aiohttp session."""
+        """Close the aiohttp session and signal model unload."""
+        await self.unload_model()
         if self.session:
             await self.session.close()
+            self.session = None
 
 class ModelManager:
     """Manager for all model providers and instances."""
@@ -589,9 +887,47 @@ class ModelManager:
         return discovered
     
     async def _discover_ollama_models(self) -> List[Dict[str, Any]]:
-        """Discover models available in Ollama using command line."""
+        """Discover models available in Ollama using API first, CLI fallback."""
         models = []
-        
+
+        base_url = self.config.get('ollama', {}).get('base_url', 'http://localhost:11434')
+
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+                async with session.get(f"{base_url}/api/tags") as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        for model in data.get('models', []):
+                            name = model.get('name', 'unknown')
+                            details = model.get('details') or {}
+                            supports_vision = any(
+                                keyword in name.lower()
+                                for keyword in ['llava', 'vision', 'vl', 'multimodal', 'bakllava', 'moondream']
+                            )
+                            models.append({
+                                'name': name,
+                                'provider': 'ollama',
+                                'size_gb': round((model.get('size', 0) or 0) / (1024 ** 3), 3),
+                                'supports_vision': supports_vision,
+                                'model_type': 'vision' if supports_vision else 'text',
+                                'cost_per_token': 0.0,
+                                'available': True,
+                                'family': details.get('family', 'unknown'),
+                                'quantization': details.get('quantization_level', 'unknown'),
+                                'parameters': details.get('parameter_size', 'unknown'),
+                                'context_length': details.get('context_length'),
+                            })
+
+                        self.logger.info(f"Found {len(models)} Ollama models via API")
+                        if models:
+                            return models
+        except asyncio.TimeoutError:
+            self.logger.info("Ollama API timed out during discovery, falling back to CLI")
+        except aiohttp.ClientConnectorError:
+            self.logger.info("Ollama API not reachable during discovery, falling back to CLI")
+        except Exception as e:
+            self.logger.warning(f"Could not discover Ollama models via API: {e}")
+
         try:
             # Use subprocess to run 'ollama list' command
             result = subprocess.run(['ollama', 'list'], 
@@ -632,7 +968,10 @@ class ModelManager:
                                 'supports_vision': supports_vision,
                                 'model_type': 'vision' if supports_vision else 'text',
                                 'cost_per_token': 0.0,
-                                'available': True
+                                'available': True,
+                                'family': 'unknown',
+                                'quantization': 'unknown',
+                                'parameters': 'unknown',
                             })
                             
                 self.logger.info(f"Found {len(models)} Ollama models via 'ollama list'")
@@ -674,7 +1013,10 @@ class ModelManager:
                                 'model_type': 'vision' if supports_vision else 'text',
                                 'cost_per_token': 0.0,
                                 'created': model.get('created', 0),
-                                'available': True
+                                'available': True,
+                                'family': model.get('owned_by', 'unknown'),
+                                'quantization': model.get('quantization', 'unknown'),
+                                'parameters': model.get('parameters', 'unknown'),
                             })
                         
                         self.logger.info(f"Found {len(models)} LM Studio models")
@@ -721,19 +1063,31 @@ class ModelManager:
         
         # Determine provider based on model name or configuration
         provider = self._detect_provider(model_name)
+        metadata = self._get_discovered_model_metadata(model_name)
         
         if provider == "huggingface":
-            model = HuggingFaceModel(model_name, self.config)
+            model = HuggingFaceModel(model_name, self.config, metadata=metadata)
         elif provider == "ollama":
-            model = OllamaModel(model_name, self.config)
+            model = OllamaModel(model_name, self.config, metadata=metadata)
         elif provider == "lm_studio":
-            model = LMStudioModel(model_name, self.config)
+            model = LMStudioModel(model_name, self.config, metadata=metadata)
         else:
             raise ValueError(f"Unknown provider for model: {model_name}")
         
         self.models[model_name] = model
         self.logger.info(f"Initialized model: {model_name} with provider: {provider}")
         return model
+
+    def _get_discovered_model_metadata(self, model_name: str) -> Dict[str, Any]:
+        """Return metadata from the local discovery cache when available."""
+        if not self._local_models_cache:
+            return {}
+
+        for models in self._local_models_cache.values():
+            for model in models:
+                if model.get('name') == model_name:
+                    return model
+        return {}
     
     def _detect_provider(self, model_name: str) -> str:
         """Detect the provider for a model based on its name."""

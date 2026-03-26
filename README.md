@@ -15,6 +15,38 @@
 
 **smaLLMs** is the most comprehensive local and cloud LLM evaluation platform, supporting **ALL 16 benchmarks used by OpenAI, Anthropic, Google DeepMind, and xAI**. Evaluate your Ollama and LM Studio models with the same rigor as top AI labs.
 
+> Current recommended workflow:
+> - Use `run_local_benchmarks.py` for local Ollama-first benchmarking.
+> - You do **not** need a Hugging Face inference API key to benchmark local models.
+> - Hugging Face is still used for benchmark datasets unless you cache them locally first.
+> - The supported local benchmark path currently ships with `gsm8k`, `mmlu`, `arc`, and `hellaswag`.
+> - Run artifacts are written to `artifacts/runs/<run_id>/` and website bundles to `website_exports/latest/`.
+
+## Recommended Quick Start
+
+### Windows 11 + Ollama
+
+```powershell
+py -3 -m pip install -r requirements.txt
+py -3 run_local_benchmarks.py discover
+py -3 run_local_benchmarks.py benchmarks
+py -3 run_local_benchmarks.py run --all-local --benchmarks gsm8k mmlu --samples 10
+py -3 run_local_benchmarks.py export
+```
+
+### Notes
+
+- Local Ollama runs measure your own hardware, not a remote provider.
+- Local runs use the Ollama API on `http://localhost:11434`.
+- Hugging Face tokens are only needed for optional cloud inference comparisons, not for local Ollama execution.
+- The website export bundle is intentionally stable:
+  - `website_exports/latest/manifest.json`
+  - `website_exports/latest/summary.json`
+  - `website_exports/latest/leaderboard.json`
+  - `website_exports/latest/models.json`
+  - `website_exports/latest/benchmarks.json`
+  - `website_exports/latest/leaderboard.csv`
+
 ### Key Features
 
 - **Marathon Mode**: Overnight evaluation of ALL local models with ALL benchmarks

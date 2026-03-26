@@ -21,6 +21,10 @@ sys.path.append(str(Path(__file__).parent))
 from intelligent_evaluator import IntelligentEvaluationOrchestrator, IntelligentEvaluationConfig
 from simple_exporter import SimpleResultsExporter
 from src.models.model_manager import ModelManager
+from src.pipeline.artifacts import ArtifactStore
+from src.pipeline.benchmarks import DEFAULT_BENCHMARKS, list_supported_benchmarks
+from src.pipeline.exporter import WebsiteExporter
+from src.pipeline.orchestrator import LocalBenchmarkOrchestrator
 import yaml
 
 class BeautifulSmaLLMsTerminal:
@@ -1784,7 +1788,15 @@ class SmaLLMsLauncher:
         print(f"\n{self.terminal.BOLD} Exporting Results{self.terminal.RESET}")
         
         try:
-            exported_files = self.exporter.export_for_website()
+            modern_exporter = WebsiteExporter(
+                artifacts_dir=self.config.get('local_benchmarks', {}).get('artifacts_dir', 'artifacts'),
+                output_dir=self.config.get('local_benchmarks', {}).get('website_export_dir', 'website_exports')
+            )
+
+            try:
+                exported_files = modern_exporter.export_run()
+            except FileNotFoundError:
+                exported_files = self.exporter.export_for_website()
             
             if exported_files:
                 print(f"\n{self.terminal.GREEN} Export completed!{self.terminal.RESET}")
@@ -1806,6 +1818,21 @@ class SmaLLMsLauncher:
     def show_status(self):
         """Show current results summary."""
         print(f"\n{self.terminal.BOLD} Current Status{self.terminal.RESET}")
+
+        artifact_store = ArtifactStore(self.config.get('local_benchmarks', {}).get('artifacts_dir', 'artifacts'))
+        latest_run_id = artifact_store.latest_run_id()
+        if latest_run_id:
+            try:
+                run_data = artifact_store.load_run(latest_run_id)
+                totals = run_data.get('summary', {}).get('totals', {})
+                print(f" {self.terminal.CYAN}artifacts/{self.terminal.RESET}: latest run {latest_run_id}")
+                print(f"   Models: {totals.get('models', 0)}")
+                print(f"   Benchmarks: {totals.get('benchmarks', 0)}")
+                print(f"   Evaluations: {totals.get('evaluations', 0)}")
+                print(f"   Samples: {totals.get('samples', 0)}")
+                print(f"   Accuracy: {totals.get('accuracy', 0.0):.4f}")
+            except Exception as e:
+                print(f" {self.terminal.YELLOW}Could not load latest artifact run: {e}{self.terminal.RESET}")
         
         # Check for recent results
         cache_dir = Path("results/cache")
@@ -1915,11 +1942,15 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="smaLLMs - Small Language Model Evaluation Platform")
     parser.add_argument('command', nargs='?', default='interactive', 
-                       choices=['interactive', 'eval', 'quick', 'export', 'status'],
+                       choices=['interactive', 'eval', 'quick', 'export', 'status', 'local-run', 'discover-local', 'benchmarks'],
                        help='Command to run')
     parser.add_argument('--models', nargs='+', help='Models to evaluate')
     parser.add_argument('--benchmark', default='gsm8k', help='Benchmark to use')
+    parser.add_argument('--benchmarks', nargs='*', help='Benchmarks to use for the modern local pipeline')
     parser.add_argument('--samples', type=int, default=50, help='Number of samples')
+    parser.add_argument('--provider', default='ollama', choices=['ollama', 'lm_studio'], help='Provider for local discovery')
+    parser.add_argument('--all-local', action='store_true', help='Use all discovered local models')
+    parser.add_argument('--no-export', action='store_true', help='Skip website export after modern local runs')
     
     args = parser.parse_args()
     launcher = SmaLLMsLauncher()
@@ -1936,6 +1967,30 @@ def main():
         launcher.export_results()
     elif args.command == 'status':
         launcher.show_status()
+    elif args.command == 'discover-local':
+        orchestrator = LocalBenchmarkOrchestrator()
+        discovered = asyncio.run(orchestrator.discover_local_models())
+        print(json.dumps(discovered, indent=2))
+    elif args.command == 'benchmarks':
+        print(json.dumps(list_supported_benchmarks(), indent=2))
+    elif args.command == 'local-run':
+        orchestrator = LocalBenchmarkOrchestrator()
+        result = asyncio.run(
+            orchestrator.run(
+                models=args.models,
+                benchmarks=args.benchmarks or [args.benchmark] or DEFAULT_BENCHMARKS,
+                samples=args.samples,
+                provider=args.provider,
+                all_local=args.all_local,
+                export_after_run=not args.no_export,
+            )
+        )
+        totals = result.get('summary', {}).get('totals', {})
+        print(json.dumps({
+            'run_id': result.get('run_id'),
+            'artifacts': result.get('run_dir'),
+            'totals': totals,
+        }, indent=2))
 
 # Export alias for backwards compatibility
 SmaLLMsEvaluator = SmaLLMsLauncher

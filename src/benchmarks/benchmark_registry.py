@@ -1429,20 +1429,17 @@ OPENAI_BENCHMARK_SUITE = [
 
 # Anthropic-style reasoning suite (BBH + conversation quality)
 ANTHROPIC_SUITE = [
-    'mmlu', 'gsm8k', 'bigbench_hard', 'gpqa_diamond', 
-    'mt_bench', 'hellaswag'
+    'mmlu', 'gsm8k', 'gpqa_diamond', 'hellaswag'
 ]
 
 # Google DeepMind suite (science + instruction following)
 DEEPMIND_SUITE = [
-    'mmlu', 'gsm8k', 'arc', 'gpqa_diamond', 
-    'ifeval', 'math'
+    'mmlu', 'gsm8k', 'arc', 'gpqa_diamond', 'math'
 ]
 
 # xAI-style suite (practical reasoning + coding)
 XAI_SUITE = [
-    'hellaswag', 'gsm8k', 'humaneval', 'mbpp', 
-    'tau_retail', 'codeforces'
+    'hellaswag', 'gsm8k', 'humaneval', 'tau_retail', 'codeforces'
 ]
 
 # Competition-focused suite (contest-level problems)
@@ -1461,10 +1458,10 @@ QUICK_SUITE = ['gsm8k', 'humaneval', 'mmlu']
 SAFE_SUITE = ['gsm8k', 'mmlu']  # Most reliable benchmarks
 
 # Coding-focused suite (programming evaluation)
-CODING_SUITE = ['humaneval', 'mbpp', 'codeforces']
+CODING_SUITE = ['humaneval', 'codeforces']
 
 # Reasoning suite (logical thinking)
-REASONING_SUITE = ['gsm8k', 'arc', 'hellaswag', 'bigbench_hard']
+REASONING_SUITE = ['gsm8k', 'arc', 'hellaswag']
 
 # Legacy compatibility
 STANDARD_BENCHMARK_SUITE = COMPREHENSIVE_SUITE
