@@ -1,25 +1,25 @@
-# smaLLMs - AI Studio-Level Benchmarking Platform with Marathon Mode
+# smaLLMs - Local Ollama Benchmark CLI
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Local & Cloud](https://img.shields.io/badge/-Ollama%20%2B%20LM%20Studio%20%2B%20Cloud-blue)](https://ollama.ai/)
-[![Marathon Mode](https://img.shields.io/badge/Marathon%20Mode-purple)](https://github.com/mmdmcy/smaLLMs)
-[![OpenAI-Level](https://img.shields.io/badge/-16%20AI%20Studio%20Benchmarks-red)](https://openai.com/)
+[![Ollama](https://img.shields.io/badge/-Ollama-blue)](https://ollama.ai/)
+[![CLI First](https://img.shields.io/badge/-CLI%20First-black)](https://github.com/mmdmcy/smaLLMs)
+[![Local Only](https://img.shields.io/badge/-Local%20Only-green)](https://github.com/mmdmcy/smaLLMs)
 
-> **Marathon Mode: Run overnight evaluation of ALL your local models with ALL 16 benchmarks**  
-> Supporting Ollama, LM Studio, and Cloud APIs with comprehensive AI studio-level evaluation!
+> CLI-first local LLM benchmarking for Ollama models.
+> Real benchmark datasets, stable website exports, and cross-platform use on Windows, Linux, and WSL.
 
-![smaLLMs Demo](https://img.shields.io/badge/Status-Production%20Ready-brightgreen) ![Benchmarks](https://img.shields.io/badge/Benchmarks-16-orange) ![Models](https://img.shields.io/badge/Local%20Models-23%2B-green)
+![smaLLMs Demo](https://img.shields.io/badge/Status-Active-blue) ![Benchmarks](https://img.shields.io/badge/Benchmarks-13-orange) ![Exports](https://img.shields.io/badge/Website%20Export-Stable-green)
 
 ## What is smaLLMs?
 
-**smaLLMs** is the most comprehensive local and cloud LLM evaluation platform, supporting **ALL 16 benchmarks used by OpenAI, Anthropic, Google DeepMind, and xAI**. Evaluate your Ollama and LM Studio models with the same rigor as top AI labs.
+**smaLLMs** is an Ollama-first local benchmark runner with a serious dataset-backed benchmark catalog and a stable export format for leaderboards and websites.
 
 > Current recommended workflow:
-> - Use `run_local_benchmarks.py` for local Ollama-first benchmarking.
+> - Use `smaLLMs.py` as the main CLI.
 > - You do **not** need a Hugging Face inference API key to benchmark local models.
 > - Hugging Face is still used for benchmark datasets unless you cache them locally first.
-> - The supported local benchmark path currently ships with `gsm8k`, `mmlu`, `arc`, and `hellaswag`.
+> - The supported local benchmark path currently ships with real benchmark suites built from: `gsm8k`, `mmlu`, `mmlu_pro`, `math`, `arc_challenge`, `arc_easy`, `hellaswag`, `winogrande`, `boolq`, `commonsense_qa`, `openbookqa`, `truthfulqa_mc1`, and `bbh_boolean_expressions`.
 > - Run artifacts are written to `artifacts/runs/<run_id>/` and website bundles to `website_exports/latest/`.
 
 ## Recommended Quick Start
@@ -28,16 +28,17 @@
 
 ```powershell
 py -3 -m pip install -r requirements.txt
-py -3 run_local_benchmarks.py discover
-py -3 run_local_benchmarks.py benchmarks
-py -3 run_local_benchmarks.py run --all-local --benchmarks gsm8k mmlu --samples 10
-py -3 run_local_benchmarks.py export
+py -3 smaLLMs.py discover
+py -3 smaLLMs.py benchmarks
+py -3 smaLLMs.py run --all-local --benchmarks core_suite --samples 10
+py -3 smaLLMs.py export
 ```
 
 ### Notes
 
 - Local Ollama runs measure your own hardware, not a remote provider.
 - Local runs use the Ollama API on `http://localhost:11434`.
+- From WSL, the runner can fall back to the Windows Ollama daemon through Windows-native API bridging when direct Linux localhost access is unavailable.
 - Hugging Face tokens are only needed for optional cloud inference comparisons, not for local Ollama execution.
 - The website export bundle is intentionally stable:
   - `website_exports/latest/manifest.json`
@@ -49,15 +50,12 @@ py -3 run_local_benchmarks.py export
 
 ### Key Features
 
-- **Marathon Mode**: Overnight evaluation of ALL local models with ALL benchmarks
-- **16 AI Studio Benchmarks**: Complete suite including AIME, GPQA, Codeforces, HealthBench
-- **Local + Cloud**: Seamlessly works with Ollama (15 models), LM Studio (8 models), and cloud APIs
-- **One Command**: `python smaLLMs.py` - everything integrated into a single file
-- **Cost-Optimized**: Smart sampling and rate limiting for efficient evaluation
-- **Beautiful Interface**: Real-time progress with color-coded results
-- **Production-Ready**: Battle-tested evaluation methodology
-- **Organized Results**: Date-based structure with clean exports
-- **Windows Compatible**: Full Unicode support and robust error handling
+- **CLI First**: The main entrypoint is `python smaLLMs.py`
+- **Ollama First**: Local-only benchmarking path focused on real local execution
+- **Real Benchmarks**: Dataset-backed suites instead of placeholder marketing labels
+- **WSL Friendly**: Works with Windows-hosted Ollama from inside WSL
+- **Website Export**: Stable JSON, CSV, and HTML bundle for downstream sites
+- **Beautiful Interface**: Live terminal progress and clean run summaries
 
 ## NEW: Marathon Mode + 16 AI Studio Benchmarks
 

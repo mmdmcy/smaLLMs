@@ -8,6 +8,11 @@ import aiohttp
 import time
 import base64
 import json
+import glob
+import os
+import platform
+import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
@@ -65,6 +70,174 @@ class GenerationResult:
     total_duration_sec: float = 0.0
     tokens_per_second: float = 0.0
     raw: Optional[Dict[str, Any]] = None
+
+
+ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+
+def _is_wsl() -> bool:
+    """Return True when running inside WSL."""
+    release = platform.release().lower()
+    return bool(os.getenv("WSL_DISTRO_NAME")) or "microsoft" in release or "wsl" in release
+
+
+def _find_windows_curl() -> Optional[str]:
+    """Locate Windows curl.exe when running from WSL."""
+    if not _is_wsl():
+        return None
+
+    for candidate in [
+        "/mnt/c/Windows/System32/curl.exe",
+        "/mnt/c/Windows/Sysnative/curl.exe",
+    ]:
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
+def _find_ollama_command(config: Dict[str, Any]) -> Optional[List[str]]:
+    """Locate an Ollama CLI command for local fallback use."""
+    configured = config.get("ollama", {}).get("command")
+    if configured:
+        if isinstance(configured, str):
+            return [configured]
+        if isinstance(configured, list):
+            return configured
+
+    local = shutil.which("ollama")
+    if local:
+        return [local]
+
+    for pattern in [
+        "/mnt/c/Users/*/AppData/Local/Programs/Ollama/ollama.exe",
+        "/mnt/c/Program Files/Ollama/ollama.exe",
+    ]:
+        matches = sorted(glob.glob(pattern))
+        if matches:
+            return [matches[0]]
+
+    return None
+
+
+def _strip_ansi_sequences(text: str) -> str:
+    """Strip ANSI control codes from CLI output."""
+    return ANSI_ESCAPE_RE.sub("", text).replace("\r", "")
+
+
+def _parse_size_to_gb(size_str: str) -> float:
+    """Parse size strings like '2.1 GB' to a float in GB."""
+    cleaned = size_str.strip().upper().replace(" ", "")
+    try:
+        if cleaned.endswith("GB"):
+            return float(cleaned[:-2])
+        if cleaned.endswith("MB"):
+            return float(cleaned[:-2]) / 1024
+        if cleaned.endswith("KB"):
+            return float(cleaned[:-2]) / (1024 * 1024)
+        if cleaned.endswith("B"):
+            return float(cleaned[:-1]) / (1024 ** 3)
+    except ValueError:
+        return 0.0
+    return 0.0
+
+
+def _detect_vision_support_from_name(model_name: str) -> bool:
+    """Best-effort vision detection from the model name."""
+    vision_keywords = ["llava", "vision", "vl", "multimodal", "bakllava", "moondream", "minicpm-v"]
+    return any(keyword in model_name.lower() for keyword in vision_keywords)
+
+
+def _parse_ollama_list_output(stdout: str) -> List[Dict[str, Any]]:
+    """Parse `ollama list` output into the repo's model metadata shape."""
+    models: List[Dict[str, Any]] = []
+    lines = [line.rstrip() for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        return models
+
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+
+        name = parts[0]
+        size_token = next((part for part in parts if part.upper().endswith(("GB", "MB", "KB", "B"))), "0B")
+        supports_vision = _detect_vision_support_from_name(name)
+        models.append(
+            {
+                "name": name,
+                "provider": "ollama",
+                "size_gb": _parse_size_to_gb(size_token),
+                "supports_vision": supports_vision,
+                "model_type": "vision" if supports_vision else "text",
+                "cost_per_token": 0.0,
+                "available": True,
+                "family": "unknown",
+                "quantization": "unknown",
+                "parameters": "unknown",
+            }
+        )
+
+    return models
+
+
+def _parse_duration_to_sec(value: str) -> float:
+    """Parse Ollama CLI duration strings to seconds."""
+    raw = value.strip().lower()
+    match = re.match(r"([0-9.]+)\s*(ns|us|µs|ms|s|m)$", raw)
+    if not match:
+        return 0.0
+
+    amount = float(match.group(1))
+    unit = match.group(2)
+    if unit == "ns":
+        return amount / 1_000_000_000
+    if unit in {"us", "µs"}:
+        return amount / 1_000_000
+    if unit == "ms":
+        return amount / 1_000
+    if unit == "s":
+        return amount
+    if unit == "m":
+        return amount * 60
+    return 0.0
+
+
+def _parse_ollama_verbose_output(stdout: str) -> Dict[str, Any]:
+    """Parse `ollama run --verbose` output into response text plus metrics."""
+    cleaned = _strip_ansi_sequences(stdout)
+    metrics_start = cleaned.find("total duration:")
+    response_text = cleaned.strip()
+    metrics_text = ""
+
+    if metrics_start != -1:
+        response_text = cleaned[:metrics_start].strip()
+        metrics_text = cleaned[metrics_start:]
+
+    metrics: Dict[str, Any] = {"response": response_text}
+    patterns = {
+        "total_duration": r"total duration:\s*([0-9.a-zA-Zµ]+)",
+        "load_duration": r"load duration:\s*([0-9.a-zA-Zµ]+)",
+        "prompt_eval_count": r"prompt eval count:\s*(\d+)",
+        "prompt_eval_duration": r"prompt eval duration:\s*([0-9.a-zA-Zµ]+)",
+        "eval_count": r"eval count:\s*(\d+)",
+        "eval_duration": r"eval duration:\s*([0-9.a-zA-Zµ]+)",
+    }
+
+    for key, pattern in patterns.items():
+        match = re.search(pattern, metrics_text, re.IGNORECASE)
+        if not match:
+            continue
+
+        value = match.group(1)
+        if key.endswith("_duration"):
+            metrics[key] = int(_parse_duration_to_sec(value) * 1_000_000_000)
+        else:
+            metrics[key] = int(value)
+
+    return metrics
 
 class BaseModel(ABC):
     """Abstract base class for all model implementations."""
@@ -308,12 +481,14 @@ class OllamaModel(BaseModel):
         super().__init__(model_name, config, metadata=metadata)
         self.base_url = config.get('ollama', {}).get('base_url', 'http://localhost:11434')
         self.session = None
+        self.transport: Optional[str] = None
+        self.ollama_command = _find_ollama_command(config)
+        self.windows_curl = _find_windows_curl()
         self.supports_vision = self._detect_vision_support()
     
     def _detect_vision_support(self) -> bool:
         """Detect if model supports vision based on name."""
-        vision_keywords = ['llava', 'vision', 'vl', 'multimodal', 'bakllava', 'moondream']
-        return any(keyword in self.model_name.lower() for keyword in vision_keywords)
+        return _detect_vision_support_from_name(self.model_name)
     
     async def _get_session(self):
         """Get or create aiohttp session."""
@@ -324,12 +499,43 @@ class OllamaModel(BaseModel):
     async def unload_model(self):
         """Unload the model from Ollama memory to free up space."""
         try:
-            session = await self._get_session()
-            # Use Ollama's proper unload API - set keep_alive to 0 to unload immediately
             payload = {"model": self.model_name, "keep_alive": 0}
-            async with session.post(f"{self.base_url}/api/generate", json=payload) as response:
-                # This should unload the model by setting keep_alive to 0
-                self.logger.info(f"Unloaded model from memory: {self.model_name}")
+            transport = await self._detect_transport()
+
+            if transport == "http":
+                session = await self._get_session()
+                async with session.post(f"{self.base_url}/api/generate", json=payload) as response:
+                    response.raise_for_status()
+            elif transport == "windows_curl" and self.windows_curl:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    [
+                        self.windows_curl,
+                        "-s",
+                        "-X",
+                        "POST",
+                        f"{self.base_url}/api/generate",
+                        "-H",
+                        "Content-Type: application/json",
+                        "--data-binary",
+                        json.dumps(payload),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            elif transport == "cli" and self.ollama_command:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    [*self.ollama_command, "stop", self.model_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+
+            self.logger.info(f"Unloaded model from memory: {self.model_name}")
         except Exception as e:
             self.logger.warning(f"Could not unload model {self.model_name}: {e}")
     
@@ -361,27 +567,49 @@ class OllamaModel(BaseModel):
         except (TypeError, ValueError):
             return 0.0
 
-    async def _request_generate(
+    async def _detect_transport(self) -> str:
+        """Detect the best available transport for talking to Ollama."""
+        if self.transport:
+            return self.transport
+
+        try:
+            session = await self._get_session()
+            async with session.get(f"{self.base_url}/api/tags", timeout=aiohttp.ClientTimeout(total=3)) as response:
+                if response.status == 200:
+                    self.transport = "http"
+                    return self.transport
+        except Exception:
+            pass
+
+        if self.windows_curl:
+            try:
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    [self.windows_curl, "-s", f"{self.base_url}/api/tags"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if result.returncode == 0 and result.stdout.strip().startswith("{"):
+                    self.transport = "windows_curl"
+                    return self.transport
+            except Exception:
+                pass
+
+        if self.ollama_command:
+            self.transport = "cli"
+            return self.transport
+
+        raise RuntimeError("Could not connect to Ollama. Start Ollama or configure an accessible local endpoint.")
+
+    def _build_payload(
         self,
         prompt: str,
         generation_config: GenerationConfig,
         image_path: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Generate a raw Ollama response payload."""
-        session = await self._get_session()
-        
-        # First check if model is available
-        try:
-            async with session.get(f"{self.base_url}/api/tags") as response:
-                if response.status == 200:
-                    tags_data = await response.json()
-                    available_models = [model['name'] for model in tags_data.get('models', [])]
-                    if self.model_name not in available_models:
-                        self.logger.error(f"Model {self.model_name} not found. Available models: {available_models}")
-                        return {"response": "", "error": "model_not_found"}
-        except Exception as e:
-            self.logger.warning(f"Could not check available models: {e}")
-        
+        """Build a standard Ollama generate payload."""
         payload = {
             "model": self.model_name,
             "prompt": prompt,
@@ -389,64 +617,170 @@ class OllamaModel(BaseModel):
                 "temperature": generation_config.temperature,
                 "num_predict": generation_config.max_tokens,
                 "top_p": generation_config.top_p,
-                "stop": generation_config.stop_sequences or []
+                "stop": generation_config.stop_sequences or [],
             },
             "stream": False,
-                "keep_alive": "10m"  # Keep model loaded for 10 minutes to avoid reload delays
+            "keep_alive": "10m",
         }
-        
-        # Add image if provided and model supports vision
+
         if image_path and self.supports_vision:
             base64_image = self._encode_image(image_path)
             if base64_image:
                 payload["images"] = [base64_image]
-        
-        # Smart retry logic with progressive timeouts for slow laptops
-        base_timeout = self.config.get('ollama', {}).get('timeout', 600)  # Default 10 minutes for slow hardware
+
+        return payload
+
+    def _timeout_config(self) -> Dict[str, int]:
+        """Return timeout and retry settings adapted to model size."""
+        base_timeout = self.config.get('ollama', {}).get('timeout', 600)
         max_retries = self.config.get('ollama', {}).get('max_retries', 5)
-        
-        # Adapt timeout based on model complexity (larger models need MUCH more time on slow hardware)
-        model_size_factor = 1.5  # Base factor increased for slow laptops
-        if '3b' in self.model_name.lower() or '7b' in self.model_name.lower():
-            model_size_factor = 3.0  # Significantly more time for 3B/7B models
-        elif '13b' in self.model_name.lower() or 'large' in self.model_name.lower():
-            model_size_factor = 5.0  # Even more time for large models
-        elif '1b' in self.model_name.lower() or '1.5b' in self.model_name.lower():
-            model_size_factor = 2.0  # Extra time even for small models on slow hardware
-        
+
+        model_size_factor = 1.5
+        lowered = self.model_name.lower()
+        if '3b' in lowered or '7b' in lowered:
+            model_size_factor = 3.0
+        elif '13b' in lowered or 'large' in lowered or '20b' in lowered:
+            model_size_factor = 5.0
+        elif '1b' in lowered or '1.5b' in lowered or '0.8b' in lowered:
+            model_size_factor = 2.0
+
+        return {
+            "base_timeout": int(base_timeout),
+            "max_retries": int(max_retries),
+            "model_size_factor": model_size_factor,
+        }
+
+    async def _request_generate_http(self, payload: Dict[str, Any], current_timeout: int) -> Dict[str, Any]:
+        """Call the Ollama HTTP API through the local Python process."""
+        session = await self._get_session()
+        timeout = aiohttp.ClientTimeout(total=current_timeout)
+        async with session.post(f"{self.base_url}/api/generate", json=payload, timeout=timeout) as response:
+            if response.status == 404:
+                self.logger.error(f"Model {self.model_name} not found in Ollama. Is it pulled?")
+                return {"response": "", "error": "model_not_found"}
+            if response.status == 500:
+                error_text = await response.text()
+                self.logger.error(f"Ollama server error: {error_text}")
+                return {"response": "", "error": error_text}
+
+            response.raise_for_status()
+            return await response.json()
+
+    async def _request_generate_windows_curl(self, payload: Dict[str, Any], current_timeout: int) -> Dict[str, Any]:
+        """Call the Ollama HTTP API through Windows curl.exe when running in WSL."""
+        if not self.windows_curl:
+            return {"response": "", "error": "windows_curl_not_found"}
+
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [
+                self.windows_curl,
+                "-s",
+                "-X",
+                "POST",
+                f"{self.base_url}/api/generate",
+                "-H",
+                "Content-Type: application/json",
+                "--data-binary",
+                json.dumps(payload),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=current_timeout,
+            check=False,
+        )
+        if result.returncode != 0:
+            return {"response": "", "error": result.stderr.strip() or "windows_curl_failed"}
+
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return {"response": "", "error": "invalid_json_from_windows_curl", "raw_stdout": result.stdout}
+
+    async def _request_generate_cli(
+        self,
+        prompt: str,
+        generation_config: GenerationConfig,
+        current_timeout: int,
+        image_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Call the Ollama CLI as the last local fallback."""
+        if not self.ollama_command:
+            return {"response": "", "error": "ollama_cli_not_found"}
+        if image_path:
+            return {"response": "", "error": "ollama_cli_image_generation_not_supported"}
+
+        command = [
+            *self.ollama_command,
+            "run",
+            self.model_name,
+            "--verbose",
+            "--nowordwrap",
+            prompt,
+        ]
+        result = await asyncio.to_thread(
+            subprocess.run,
+            command,
+            capture_output=True,
+            text=True,
+            timeout=current_timeout,
+            check=False,
+        )
+        if result.returncode != 0:
+            return {"response": "", "error": result.stderr.strip() or "ollama_cli_failed"}
+
+        parsed = _parse_ollama_verbose_output(result.stdout)
+        parsed["transport"] = "cli"
+        return parsed
+
+    async def _request_generate(
+        self,
+        prompt: str,
+        generation_config: GenerationConfig,
+        image_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate a raw Ollama response payload."""
+        payload = self._build_payload(prompt, generation_config, image_path=image_path)
+        timeout_config = self._timeout_config()
+        base_timeout = timeout_config["base_timeout"]
+        max_retries = timeout_config["max_retries"]
+        model_size_factor = timeout_config["model_size_factor"]
+
         for attempt in range(max_retries + 1):
             try:
-                # Progressive timeout: increase significantly with each retry for slow laptops
-                current_timeout = int(base_timeout * model_size_factor * (1 + attempt * 1.0))  # Double the progression
-                timeout = aiohttp.ClientTimeout(total=current_timeout)
-                
-                self.logger.debug(f"Ollama request attempt {attempt + 1}/{max_retries + 1} with {current_timeout}s timeout for {self.model_name}")
-                
-                async with session.post(f"{self.base_url}/api/generate", json=payload, timeout=timeout) as response:
-                    if response.status == 404:
-                        self.logger.error(f"Model {self.model_name} not found in Ollama. Is it pulled?")
-                        return {"response": "", "error": "model_not_found"}
-                    elif response.status == 500:
-                        error_text = await response.text()
-                        self.logger.error(f"Ollama server error: {error_text}")
-                        return {"response": "", "error": error_text}
-                        
-                    response.raise_for_status()
-                    result = await response.json()
-                    response_text = result.get("response", "").strip()
+                current_timeout = int(base_timeout * model_size_factor * (1 + attempt * 1.0))
+                transport = await self._detect_transport()
+                self.logger.debug(
+                    f"Ollama request attempt {attempt + 1}/{max_retries + 1} with {current_timeout}s "
+                    f"timeout for {self.model_name} via {transport}"
+                )
 
-                    self.logger.info(
-                        f"Ollama response for {self.model_name}: status={response.status}, "
-                        f"response_length={len(response_text)}"
+                if transport == "http":
+                    result = await self._request_generate_http(payload, current_timeout)
+                elif transport == "windows_curl":
+                    result = await self._request_generate_windows_curl(payload, current_timeout)
+                else:
+                    result = await self._request_generate_cli(
+                        prompt,
+                        generation_config,
+                        current_timeout,
+                        image_path=image_path,
                     )
-                    if not response_text:
-                        self.logger.warning(f"Empty response from Ollama for {self.model_name}: {result}")
 
-                    return result
-            
+                response_text = (result.get("response") or "").strip()
+                if result.get("error"):
+                    self.logger.warning(f"Ollama generation returned an error for {self.model_name}: {result['error']}")
+                elif not response_text:
+                    self.logger.warning(f"Empty response from Ollama for {self.model_name}: {result}")
+                else:
+                    self.logger.info(
+                        f"Ollama response for {self.model_name}: response_length={len(response_text)} via {transport}"
+                    )
+                return result
+
             except asyncio.TimeoutError:
                 if attempt < max_retries:
-                    wait_time = 10 * (attempt + 1)  # Longer wait for slow hardware: 10s, 20s, 30s, 40s, 50s
+                    wait_time = 10 * (attempt + 1)
                     self.logger.warning(f"Ollama generation timeout for model {self.model_name} (timeout: {current_timeout}s), retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries + 1})")
                     await asyncio.sleep(wait_time)
                 else:
@@ -454,9 +788,11 @@ class OllamaModel(BaseModel):
                     return {"response": "", "error": "timeout"}
             except aiohttp.ClientError as e:
                 self.logger.error(f"Ollama connection error: {str(e)}")
+                self.transport = None
                 return {"response": "", "error": str(e)}
             except Exception as e:
                 self.logger.error(f"Ollama generation error: {str(e)}")
+                self.transport = None
                 return {"response": "", "error": str(e)}
         
         return {"response": "", "error": "unknown"}
@@ -888,36 +1224,38 @@ class ModelManager:
     
     async def _discover_ollama_models(self) -> List[Dict[str, Any]]:
         """Discover models available in Ollama using API first, CLI fallback."""
-        models = []
-
         base_url = self.config.get('ollama', {}).get('base_url', 'http://localhost:11434')
+        windows_curl = _find_windows_curl()
+        ollama_command = _find_ollama_command(self.config)
+
+        def parse_api_models(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+            parsed: List[Dict[str, Any]] = []
+            for model in data.get('models', []):
+                name = model.get('name', 'unknown')
+                details = model.get('details') or {}
+                supports_vision = _detect_vision_support_from_name(name)
+                parsed.append(
+                    {
+                        'name': name,
+                        'provider': 'ollama',
+                        'size_gb': round((model.get('size', 0) or 0) / (1024 ** 3), 3),
+                        'supports_vision': supports_vision,
+                        'model_type': 'vision' if supports_vision else 'text',
+                        'cost_per_token': 0.0,
+                        'available': True,
+                        'family': details.get('family', 'unknown'),
+                        'quantization': details.get('quantization_level', 'unknown'),
+                        'parameters': details.get('parameter_size', 'unknown'),
+                        'context_length': details.get('context_length'),
+                    }
+                )
+            return parsed
 
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
                 async with session.get(f"{base_url}/api/tags") as response:
                     if response.status == 200:
-                        data = await response.json()
-                        for model in data.get('models', []):
-                            name = model.get('name', 'unknown')
-                            details = model.get('details') or {}
-                            supports_vision = any(
-                                keyword in name.lower()
-                                for keyword in ['llava', 'vision', 'vl', 'multimodal', 'bakllava', 'moondream']
-                            )
-                            models.append({
-                                'name': name,
-                                'provider': 'ollama',
-                                'size_gb': round((model.get('size', 0) or 0) / (1024 ** 3), 3),
-                                'supports_vision': supports_vision,
-                                'model_type': 'vision' if supports_vision else 'text',
-                                'cost_per_token': 0.0,
-                                'available': True,
-                                'family': details.get('family', 'unknown'),
-                                'quantization': details.get('quantization_level', 'unknown'),
-                                'parameters': details.get('parameter_size', 'unknown'),
-                                'context_length': details.get('context_length'),
-                            })
-
+                        models = parse_api_models(await response.json())
                         self.logger.info(f"Found {len(models)} Ollama models via API")
                         if models:
                             return models
@@ -928,53 +1266,38 @@ class ModelManager:
         except Exception as e:
             self.logger.warning(f"Could not discover Ollama models via API: {e}")
 
+        if windows_curl:
+            try:
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    [windows_curl, "-s", f"{base_url}/api/tags"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    models = parse_api_models(json.loads(result.stdout))
+                    self.logger.info(f"Found {len(models)} Ollama models via Windows curl bridge")
+                    if models:
+                        return models
+            except Exception as e:
+                self.logger.warning(f"Could not discover Ollama models via Windows curl bridge: {e}")
+
+        if not ollama_command:
+            return []
+
         try:
-            # Use subprocess to run 'ollama list' command
-            result = subprocess.run(['ollama', 'list'], 
-                                  capture_output=True, 
-                                  text=True, 
-                                  timeout=10)
-            
+            result = subprocess.run(
+                [*ollama_command, 'list'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
             if result.returncode == 0:
-                lines = result.stdout.strip().split('\n')
-                # Skip header line
-                for line in lines[1:]:
-                    if line.strip():
-                        parts = line.split()
-                        if len(parts) >= 3:
-                            name = parts[0]
-                            size_str = parts[2] if len(parts) > 2 else "0B"
-                            
-                            # Parse size (convert from "1.2GB" format to GB float)
-                            size_gb = 0
-                            try:
-                                if 'GB' in size_str:
-                                    size_gb = float(size_str.replace('GB', ''))
-                                elif 'MB' in size_str:
-                                    size_gb = float(size_str.replace('MB', '')) / 1024
-                                elif 'KB' in size_str:
-                                    size_gb = float(size_str.replace('KB', '')) / (1024 * 1024)
-                            except:
-                                size_gb = 0
-                            
-                            # Detect vision support
-                            supports_vision = any(keyword in name.lower() 
-                                                for keyword in ['llava', 'vision', 'vl', 'multimodal', 'bakllava', 'moondream'])
-                            
-                            models.append({
-                                'name': name,
-                                'provider': 'ollama',
-                                'size_gb': size_gb,
-                                'supports_vision': supports_vision,
-                                'model_type': 'vision' if supports_vision else 'text',
-                                'cost_per_token': 0.0,
-                                'available': True,
-                                'family': 'unknown',
-                                'quantization': 'unknown',
-                                'parameters': 'unknown',
-                            })
-                            
+                models = _parse_ollama_list_output(result.stdout)
                 self.logger.info(f"Found {len(models)} Ollama models via 'ollama list'")
+                return models
             else:
                 self.logger.warning(f"'ollama list' failed with return code {result.returncode}: {result.stderr}")
                 
@@ -985,7 +1308,7 @@ class ModelManager:
         except Exception as e:
             self.logger.error(f"Error running 'ollama list': {e}")
         
-        return models
+        return []
     
     async def _discover_lm_studio_models(self) -> List[Dict[str, Any]]:
         """Discover models available in LM Studio (only if server is running)."""
@@ -1063,6 +1386,8 @@ class ModelManager:
         
         # Determine provider based on model name or configuration
         provider = self._detect_provider(model_name)
+        if provider in {"ollama", "lm_studio"} and self._local_models_cache is None:
+            await self.discover_local_models()
         metadata = self._get_discovered_model_metadata(model_name)
         
         if provider == "huggingface":

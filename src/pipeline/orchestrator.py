@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import yaml
 
@@ -20,10 +20,18 @@ from src.pipeline.artifacts import (
     safe_slug,
     utcnow_iso,
 )
-from src.pipeline.benchmarks import DEFAULT_BENCHMARKS, get_supported_benchmark, list_supported_benchmarks
+from src.pipeline.benchmarks import (
+    DEFAULT_BENCHMARKS,
+    expand_benchmark_selection,
+    get_supported_benchmark,
+    list_benchmark_suites,
+    list_supported_benchmarks,
+)
 
 
 LOGGER = logging.getLogger(__name__)
+
+ProgressCallback = Optional[Callable[[Dict[str, Any]], None]]
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -123,9 +131,13 @@ class LocalBenchmarkOrchestrator:
         provider: Optional[str] = None,
         all_local: bool = False,
         export_after_run: Optional[bool] = None,
+        progress_callback: ProgressCallback = None,
     ) -> Dict[str, Any]:
         """Run local benchmarks and optionally export the latest website bundle."""
-        benchmark_names = benchmarks or list(self.config.get("local_benchmarks", {}).get("default_benchmarks", DEFAULT_BENCHMARKS))
+        requested_benchmarks = benchmarks or list(
+            self.config.get("local_benchmarks", {}).get("default_benchmarks", DEFAULT_BENCHMARKS)
+        )
+        benchmark_names = expand_benchmark_selection(requested_benchmarks)
         sample_count = samples or int(self.config.get("local_benchmarks", {}).get("default_samples", 25))
         temperature = float(self.config.get("local_benchmarks", {}).get("default_temperature", 0.0))
         export_after_run = (
@@ -144,9 +156,11 @@ class LocalBenchmarkOrchestrator:
             "mode": "local_benchmarks",
             "models": resolved_models,
             "benchmarks": benchmark_names,
+            "requested_benchmarks": requested_benchmarks,
             "samples_per_benchmark": sample_count,
             "temperature": temperature,
             "supported_benchmarks": list_supported_benchmarks(),
+            "benchmark_suites": list_benchmark_suites(),
             "system": collect_system_metadata(),
             "repository": collect_repository_metadata("."),
             "config_path": self.config_path,
@@ -159,12 +173,24 @@ class LocalBenchmarkOrchestrator:
             for model_name in resolved_models:
                 for benchmark_name in benchmark_names:
                     LOGGER.info("Running %s on %s", model_name, benchmark_name)
+                    if progress_callback:
+                        progress_callback(
+                            {
+                                "event": "benchmark_started",
+                                "run_id": paths.run_id,
+                                "model_name": model_name,
+                                "benchmark_name": benchmark_name,
+                                "sample_count": sample_count,
+                            }
+                        )
+
                     benchmark_result = await self._run_single_benchmark(
                         paths=paths,
                         model_name=model_name,
                         benchmark_name=benchmark_name,
                         sample_count=sample_count,
                         temperature=temperature,
+                        progress_callback=progress_callback,
                     )
                     benchmark_results.append(benchmark_result)
             summary = self._build_run_summary(paths, benchmark_results)
@@ -190,6 +216,7 @@ class LocalBenchmarkOrchestrator:
         benchmark_name: str,
         sample_count: int,
         temperature: float,
+        progress_callback: ProgressCallback = None,
     ) -> Dict[str, Any]:
         """Run one benchmark against one model and persist its artifacts."""
         benchmark = get_supported_benchmark(benchmark_name)
@@ -203,6 +230,7 @@ class LocalBenchmarkOrchestrator:
                 run_id=paths.run_id,
                 num_samples=sample_count,
                 temperature=temperature,
+                progress_callback=progress_callback,
             )
             benchmark_result = execution.benchmark_result
             sample_file = self.artifact_store.write_sample_results(paths, benchmark_name, model_name, execution.samples)
@@ -238,6 +266,16 @@ class LocalBenchmarkOrchestrator:
                     "local_cost_estimate": 0.0,
                 },
             }
+            if progress_callback:
+                progress_callback(
+                    {
+                        "event": "benchmark_failed",
+                        "run_id": paths.run_id,
+                        "model_name": model_name,
+                        "benchmark_name": benchmark_name,
+                        "error": str(exc),
+                    }
+                )
             failure_file = self.artifact_store.write_benchmark_result(paths, benchmark_name, model_name, failure)
             failure["artifact_paths"] = {"benchmark_json": str(failure_file)}
             self.artifact_store.write_benchmark_result(paths, benchmark_name, model_name, failure)
