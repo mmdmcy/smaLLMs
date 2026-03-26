@@ -28,6 +28,20 @@ evaluation:
     humaneval:
       temperature: 0.1
       max_tokens: 512
+
+# Modern local benchmark pipeline
+local_benchmarks:
+  artifacts_dir: "artifacts"
+  website_export_dir: "website_exports"
+  default_provider: "ollama"
+  default_samples: 25
+  default_temperature: 0.0
+  default_benchmarks:
+    - "gsm8k"
+    - "mmlu"
+    - "arc"
+    - "hellaswag"
+  export_after_run: true
     
 # Storage Settings
 storage:

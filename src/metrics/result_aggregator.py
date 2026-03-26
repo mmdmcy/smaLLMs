@@ -139,6 +139,10 @@ class ResultAggregator:
     
     def _get_model_cost_per_token(self, model_name: str) -> float:
         """Get cost per token for a model."""
+        # Treat simple local model names and Ollama-style tags as free local execution.
+        if ":" in model_name or "/" not in model_name:
+            return 0.0
+
         # Simplified cost mapping - in practice would come from model manager
         cost_mapping = {
             'small': 0.0001,   # < 3B models

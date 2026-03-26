@@ -46,6 +46,8 @@ Thumbs.db
 
 # Project specific
 smaLLMs_results/
+artifacts/
+website_exports/
 *.log
 .cache/
 temp/

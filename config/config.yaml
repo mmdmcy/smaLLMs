@@ -30,6 +30,19 @@ evaluation_mode:
   prefer_local: true  # Prefer local models when available
   auto_discover_models: true  # Automatically find local models
   include_vision_models: true  # Include vision models in evaluations
+
+local_benchmarks:
+  artifacts_dir: "artifacts"
+  website_export_dir: "website_exports"
+  default_provider: "ollama"
+  default_samples: 25
+  default_temperature: 0.0
+  default_benchmarks:
+    - "gsm8k"
+    - "mmlu"
+    - "arc"
+    - "hellaswag"
+  export_after_run: true
   
 inference_endpoints:
     timeout: 600  # 10 minutes for slow laptops - consistent with local model timeouts
