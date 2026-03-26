@@ -56,9 +56,9 @@ async def _handle_discover(args: argparse.Namespace) -> None:
 
 
 def _handle_benchmarks(_: argparse.Namespace) -> None:
-    from src.pipeline.benchmarks import list_supported_benchmarks
+    from src.pipeline.benchmarks import list_benchmark_suites, list_supported_benchmarks
 
-    print(json.dumps(list_supported_benchmarks(), indent=2))
+    print(json.dumps({"suites": list_benchmark_suites(), "benchmarks": list_supported_benchmarks()}, indent=2))
 
 
 def _handle_export(args: argparse.Namespace) -> None:
@@ -80,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--models", nargs="*", help="Model names. Supports repeated flags or comma-separated values.")
     run_parser.add_argument("--benchmarks", nargs="*", help="Benchmark keys. Defaults to the supported local suite.")
     run_parser.add_argument("--samples", type=int, default=25, help="Samples per benchmark.")
-    run_parser.add_argument("--provider", default="ollama", choices=["ollama", "lm_studio"], help="Discovery provider when --models is omitted.")
+    run_parser.add_argument("--provider", default="ollama", choices=["ollama"], help="Discovery provider when --models is omitted.")
     run_parser.add_argument("--all-local", action="store_true", help="Run across all discovered local models.")
     run_parser.add_argument("--no-export", action="store_true", help="Skip website export after the run.")
     run_parser.set_defaults(handler=_handle_run)
