@@ -178,21 +178,38 @@ class ArtifactStore:
 
 def collect_system_metadata() -> Dict[str, Any]:
     """Collect system metadata for reproducible benchmark runs."""
-    import psutil
-
-    memory = psutil.virtual_memory()
-    return {
+    metadata = {
         "hostname": socket.gethostname(),
         "platform": platform.system(),
         "platform_release": platform.release(),
         "platform_version": platform.version(),
         "architecture": platform.machine(),
         "python_version": platform.python_version(),
-        "cpu_count_logical": psutil.cpu_count(logical=True),
-        "cpu_count_physical": psutil.cpu_count(logical=False),
-        "memory_total_mb": round(memory.total / (1024 * 1024), 2),
         "ollama_version": _run_command(["ollama", "--version"]),
     }
+
+    try:
+        import psutil
+
+        memory = psutil.virtual_memory()
+        metadata.update(
+            {
+                "cpu_count_logical": psutil.cpu_count(logical=True),
+                "cpu_count_physical": psutil.cpu_count(logical=False),
+                "memory_total_mb": round(memory.total / (1024 * 1024), 2),
+            }
+        )
+    except ModuleNotFoundError:
+        metadata.update(
+            {
+                "cpu_count_logical": None,
+                "cpu_count_physical": None,
+                "memory_total_mb": None,
+                "system_metadata_warning": "psutil_not_installed",
+            }
+        )
+
+    return metadata
 
 
 def collect_repository_metadata(repo_root: str = ".") -> Dict[str, Any]:

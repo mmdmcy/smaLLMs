@@ -45,6 +45,7 @@ local_benchmarks:
     - "winogrande"
     - "boolq"
     - "commonsense_qa"
+    - "piqa"
   export_after_run: true
   
 inference_endpoints:
