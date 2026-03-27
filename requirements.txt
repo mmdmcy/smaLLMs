@@ -1,10 +1,10 @@
-# smaLLMs Marathon Mode - Core Dependencies
-# Optimized for local model evaluation with Ollama + LM Studio
+# smaLLMs - Core Dependencies
+# Optimized for CLI-first local benchmarking with Ollama + LM Studio
 
 # === CORE DEPENDENCIES ===
 # HuggingFace ecosystem for benchmarks and cloud models
 huggingface_hub>=0.20.0
-datasets>=2.16.0
+datasets>=2.16.0,<4.0.0
 transformers>=4.36.0
 evaluate>=0.4.1
 
@@ -20,7 +20,7 @@ pyyaml>=6.0.1
 requests>=2.31.0
 tqdm>=4.66.0
 
-# Async operations for Marathon Mode
+# Async operations for local runtimes and the benchmark runner
 aiohttp>=3.9.0
 asyncio-throttle>=1.0.2
 
@@ -58,5 +58,5 @@ seaborn>=0.12.0
 
 # === PLATFORM NOTES ===
 # Windows: All dependencies work out of the box
-# macOS/Linux: All dependencies work out of the box  
-# No additional system dependencies required for Marathon Mode
+# macOS/Linux: All dependencies work out of the box
+# No extra GUI dependencies are required for the terminal UI

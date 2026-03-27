@@ -4,14 +4,51 @@ Reliable dataset-backed benchmarks for local model evaluation.
 
 from __future__ import annotations
 
+import ast
+import json
 import math
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 
 ProgressCallback = Optional[Callable[[Dict[str, Any]], None]]
+
+
+@dataclass(frozen=True)
+class BenchmarkCatalogEntry:
+    """Metadata for both runnable and tracked-only benchmarks."""
+
+    key: str
+    display_name: str
+    description: str
+    category: str
+    status: str
+    harness: str
+    local_runnable: bool
+    dataset_name: Optional[str] = None
+    config_name: Optional[str] = None
+    split: Optional[str] = None
+    labs: Tuple[str, ...] = ()
+    notes: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert catalog metadata to a JSON-friendly shape."""
+        return {
+            "key": self.key,
+            "display_name": self.display_name,
+            "description": self.description,
+            "category": self.category,
+            "status": self.status,
+            "harness": self.harness,
+            "local_runnable": self.local_runnable,
+            "dataset_name": self.dataset_name,
+            "config_name": self.config_name,
+            "split": self.split,
+            "labs": list(self.labs),
+            "notes": self.notes,
+        }
 
 MATH_CONFIGS = [
     "algebra",
@@ -32,9 +69,24 @@ def _safe_load_dataset(
     """Load a dataset in streaming mode to keep local runs lightweight."""
     from datasets import load_dataset
 
+    kwargs: Dict[str, Any] = {
+        "split": split,
+        "streaming": True,
+    }
+
+    try:
+        if config_name:
+            return load_dataset(dataset_name, config_name, **kwargs)
+        return load_dataset(dataset_name, **kwargs)
+    except Exception as exc:
+        message = str(exc)
+        if "trust_remote_code=True" not in message and "contains custom code" not in message:
+            raise
+
+    kwargs["trust_remote_code"] = True
     if config_name:
-        return load_dataset(dataset_name, config_name, split=split, streaming=True)
-    return load_dataset(dataset_name, split=split, streaming=True)
+        return load_dataset(dataset_name, config_name, **kwargs)
+    return load_dataset(dataset_name, **kwargs)
 
 
 def _take_samples(dataset: Iterable[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
@@ -44,6 +96,22 @@ def _take_samples(dataset: Iterable[Dict[str, Any]], limit: int) -> List[Dict[st
         if idx >= limit:
             break
         rows.append(row)
+    return rows
+
+
+def _take_filtered_samples(
+    dataset: Iterable[Dict[str, Any]],
+    limit: int,
+    predicate: Callable[[Dict[str, Any]], bool],
+) -> List[Dict[str, Any]]:
+    """Take a bounded number of rows that satisfy a filter predicate."""
+    rows: List[Dict[str, Any]] = []
+    for row in dataset:
+        if not predicate(row):
+            continue
+        rows.append(row)
+        if len(rows) >= limit:
+            break
     return rows
 
 
@@ -128,6 +196,99 @@ def _normalize_text_answer(value: str) -> str:
     cleaned = re.sub(r"\s+", "", cleaned)
     cleaned = cleaned.strip("{}()[]")
     return cleaned.lower()
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove surrounding fenced-code markers when models wrap raw answers."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", cleaned)
+        cleaned = re.sub(r"\n?```$", "", cleaned)
+    return cleaned.strip()
+
+
+def _normalize_multiline_text(text: str) -> str:
+    """Normalize multiline answers while preserving meaningful newlines."""
+    cleaned = text.strip()
+    cleaned = re.sub(r"^\s*(assistant|answer|final answer)\s*:\s*", "", cleaned, count=1, flags=re.IGNORECASE)
+    cleaned = _strip_code_fences(cleaned)
+    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = cleaned.strip().strip('"').strip("'")
+    lines = [line.rstrip() for line in cleaned.splitlines()]
+    return "\n".join(lines).strip()
+
+
+def _extract_last_list_literal(text: str) -> str:
+    """Extract the last simple list literal from a response."""
+    final_matches = re.findall(r"final answer\s*:\s*(\[[^\n]*\])", text, flags=re.IGNORECASE)
+    if final_matches:
+        return final_matches[-1]
+
+    generic_matches = re.findall(r"(\[[^\n]*\])", text)
+    return generic_matches[-1] if generic_matches else ""
+
+
+def _parse_string_list(text: str) -> List[str]:
+    """Parse a flat list literal like `[a, b]` into string items."""
+    literal = _extract_last_list_literal(text)
+    if not literal:
+        return []
+
+    try:
+        parsed = ast.literal_eval(literal)
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    except (SyntaxError, ValueError):
+        pass
+
+    inner = literal.strip()[1:-1].strip()
+    if not inner:
+        return []
+
+    items: List[str] = []
+    for part in inner.split(","):
+        item = part.strip().strip('"').strip("'")
+        if item:
+            items.append(item)
+    return items
+
+
+def _normalize_string_list(items: Sequence[str]) -> List[str]:
+    """Normalize list items for exact set-style comparisons."""
+    normalized: List[str] = []
+    seen = set()
+    for item in items:
+        token = str(item).strip().strip('"').strip("'")
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        normalized.append(token)
+    return sorted(normalized)
+
+
+def _render_chat_prompt(serialized_prompt: str) -> str:
+    """Render a JSON chat transcript as a plain-text prompt for local models."""
+    try:
+        messages = json.loads(serialized_prompt)
+    except json.JSONDecodeError:
+        return serialized_prompt
+
+    if not isinstance(messages, list):
+        return serialized_prompt
+
+    rendered: List[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role", "user")).strip().capitalize()
+        content = str(message.get("content", "")).strip()
+        rendered.append(f"{role}: {content}")
+
+    if not rendered:
+        return serialized_prompt
+
+    rendered.append("Assistant:")
+    return "\n\n".join(rendered)
 
 
 def _normalize_choice_response(response: str, labels: Sequence[str]) -> str:
@@ -553,6 +714,179 @@ class HendrycksMathBenchmark(DatasetBenchmark):
         }
 
 
+class AIME2024Benchmark(DatasetBenchmark):
+    key = "aime_2024"
+    display_name = "AIME 2024"
+    dataset_name = "Maxwell-Jia/AIME_2024"
+    config_name = None
+    split = "train"
+    description = "American Invitational Mathematics Examination 2024 problems."
+    category = "reasoning"
+    max_tokens = 160
+
+    def build_prompt(self, row: Dict[str, Any]) -> str:
+        return (
+            "Solve the AIME problem. You may reason briefly, but end with a final line in the "
+            "exact format 'Final answer: <integer>'.\n\n"
+            f"Problem: {row['Problem']}\n"
+        )
+
+    def extract_expected_answer(self, row: Dict[str, Any]) -> str:
+        return str(row["Answer"])
+
+    def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
+        return _extract_final_number(response_text)
+
+    def is_correct(self, predicted: str, expected: str) -> bool:
+        return _numeric_equal(predicted, expected, tolerance=0.0)
+
+    def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "problem": row["Problem"],
+            "problem_id": row.get("ID"),
+        }
+
+
+class AIME2025Benchmark(DatasetBenchmark):
+    key = "aime_2025"
+    display_name = "AIME 2025"
+    dataset_name = "MathArena/aime_2025"
+    config_name = None
+    split = "train"
+    description = "American Invitational Mathematics Examination 2025 problems."
+    category = "reasoning"
+    max_tokens = 160
+
+    def build_prompt(self, row: Dict[str, Any]) -> str:
+        return (
+            "Solve the AIME problem. You may reason briefly, but end with a final line in the "
+            "exact format 'Final answer: <integer>'.\n\n"
+            f"Problem: {row['problem']}\n"
+        )
+
+    def extract_expected_answer(self, row: Dict[str, Any]) -> str:
+        return str(row["answer"])
+
+    def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
+        return _extract_final_number(response_text)
+
+    def is_correct(self, predicted: str, expected: str) -> bool:
+        return _numeric_equal(predicted, expected, tolerance=0.0)
+
+    def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "problem": row["problem"],
+            "problem_idx": row.get("problem_idx"),
+            "problem_type": row.get("problem_type"),
+        }
+
+
+class GraphwalksBenchmark(DatasetBenchmark):
+    dataset_name = "openai/graphwalks"
+    config_name = None
+    split = "train"
+    category = "long_context"
+    max_tokens = 192
+
+    def __init__(
+        self,
+        key: str,
+        display_name: str,
+        description: str,
+        problem_type: str,
+        min_prompt_chars: int,
+        max_prompt_chars: int,
+    ) -> None:
+        self.key = key
+        self.display_name = display_name
+        self.description = description
+        self.problem_type = problem_type
+        self.min_prompt_chars = min_prompt_chars
+        self.max_prompt_chars = max_prompt_chars
+
+    def load_rows(self, limit: int) -> List[Dict[str, Any]]:
+        dataset = _safe_load_dataset(self.dataset_name, self.config_name, self.split)
+        return _take_filtered_samples(
+            dataset,
+            limit,
+            lambda row: (
+                str(row.get("problem_type", "")).lower() == self.problem_type
+                and self.min_prompt_chars <= int(row.get("prompt_chars") or 0) <= self.max_prompt_chars
+            ),
+        )
+
+    def build_prompt(self, row: Dict[str, Any]) -> str:
+        return row["prompt"]
+
+    def extract_expected_answer(self, row: Dict[str, Any]) -> str:
+        return json.dumps(_normalize_string_list(row["answer_nodes"]))
+
+    def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
+        return json.dumps(_normalize_string_list(_parse_string_list(response_text)))
+
+    def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "prompt_chars": row.get("prompt_chars"),
+            "problem_type": row.get("problem_type"),
+            "date_added": row.get("date_added"),
+            "answer_nodes": row.get("answer_nodes"),
+        }
+
+
+class MRCRBenchmark(DatasetBenchmark):
+    dataset_name = "openai/mrcr"
+    config_name = None
+    split = "train"
+    category = "long_context"
+    max_tokens = 2048
+
+    def __init__(
+        self,
+        key: str,
+        display_name: str,
+        description: str,
+        n_needles: int,
+        min_chars: int,
+        max_chars: int,
+    ) -> None:
+        self.key = key
+        self.display_name = display_name
+        self.description = description
+        self.n_needles = n_needles
+        self.min_chars = min_chars
+        self.max_chars = max_chars
+
+    def load_rows(self, limit: int) -> List[Dict[str, Any]]:
+        dataset = _safe_load_dataset(self.dataset_name, self.config_name, self.split)
+        return _take_filtered_samples(
+            dataset,
+            limit,
+            lambda row: (
+                int(row.get("n_needles") or 0) == self.n_needles
+                and self.min_chars <= int(row.get("n_chars") or 0) < self.max_chars
+            ),
+        )
+
+    def build_prompt(self, row: Dict[str, Any]) -> str:
+        return _render_chat_prompt(row["prompt"])
+
+    def extract_expected_answer(self, row: Dict[str, Any]) -> str:
+        return _normalize_multiline_text(row["answer"])
+
+    def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
+        return _normalize_multiline_text(response_text)
+
+    def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "n_needles": row.get("n_needles"),
+            "desired_msg_index": row.get("desired_msg_index"),
+            "total_messages": row.get("total_messages"),
+            "n_chars": row.get("n_chars"),
+            "date_added": row.get("date_added"),
+            "random_string_to_prepend": row.get("random_string_to_prepend"),
+        }
+
+
 class ARCChallengeBenchmark(DatasetBenchmark):
     key = "arc_challenge"
     display_name = "ARC Challenge"
@@ -734,6 +1068,76 @@ class CommonsenseQABenchmark(DatasetBenchmark):
         }
 
 
+class PIQABenchmark(DatasetBenchmark):
+    key = "piqa"
+    display_name = "PIQA"
+    dataset_name = "piqa"
+    config_name = None
+    split = "validation"
+    description = "Physical commonsense reasoning with two candidate solutions."
+    category = "reasoning"
+    max_tokens = 24
+
+    def build_prompt(self, row: Dict[str, Any]) -> str:
+        return (
+            "Choose the more sensible physical-world solution. Reply with only A or B.\n\n"
+            f"Goal: {row['goal']}\n"
+            f"A. {row['sol1']}\n"
+            f"B. {row['sol2']}\n"
+            "Answer:"
+        )
+
+    def extract_expected_answer(self, row: Dict[str, Any]) -> str:
+        return "A" if int(row["label"]) == 0 else "B"
+
+    def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
+        return _normalize_choice_response(response_text, ["A", "B"])
+
+    def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "goal": row["goal"],
+            "sol1": row["sol1"],
+            "sol2": row["sol2"],
+        }
+
+
+class SocialIQABenchmark(DatasetBenchmark):
+    key = "social_iqa"
+    display_name = "Social IQa"
+    dataset_name = "social_i_qa"
+    config_name = None
+    split = "validation"
+    description = "Social commonsense reasoning with three answer choices."
+    category = "reasoning"
+    max_tokens = 32
+
+    def build_prompt(self, row: Dict[str, Any]) -> str:
+        return (
+            "Answer the social reasoning question. Reply with only A, B, or C.\n\n"
+            f"Context: {row['context']}\n"
+            f"Question: {row['question']}\n"
+            f"A. {row['answerA']}\n"
+            f"B. {row['answerB']}\n"
+            f"C. {row['answerC']}\n"
+            "Answer:"
+        )
+
+    def extract_expected_answer(self, row: Dict[str, Any]) -> str:
+        return {"1": "A", "2": "B", "3": "C"}[str(row["label"])]
+
+    def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
+        return _normalize_choice_response(response_text, ["A", "B", "C"])
+
+    def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "context": row["context"],
+            "question": row["question"],
+            "answer_a": row["answerA"],
+            "answer_b": row["answerB"],
+            "answer_c": row["answerC"],
+        }
+
+
 class OpenBookQABenchmark(DatasetBenchmark):
     key = "openbookqa"
     display_name = "OpenBookQA"
@@ -841,15 +1245,115 @@ SUPPORTED_BENCHMARKS: Dict[str, DatasetBenchmark] = {
     "mmlu": MMLUBenchmark(),
     "mmlu_pro": MMLUProBenchmark(),
     "math": HendrycksMathBenchmark(),
+    "aime_2024": AIME2024Benchmark(),
+    "aime_2025": AIME2025Benchmark(),
     "arc_challenge": ARCChallengeBenchmark(),
     "arc_easy": ARCEasyBenchmark(),
     "hellaswag": HellaSwagBenchmark(),
     "winogrande": WinograndeBenchmark(),
     "boolq": BoolQBenchmark(),
     "commonsense_qa": CommonsenseQABenchmark(),
+    "piqa": PIQABenchmark(),
+    "social_iqa": SocialIQABenchmark(),
     "openbookqa": OpenBookQABenchmark(),
     "truthfulqa_mc1": TruthfulQAMC1Benchmark(),
     "bbh_boolean_expressions": BBHBooleanExpressionsBenchmark(),
+    "graphwalks_bfs_0_128k": GraphwalksBenchmark(
+        key="graphwalks_bfs_0_128k",
+        display_name="Graphwalks BFS 0K-128K",
+        description="OpenAI Graphwalks breadth-first search tasks with prompts up to 128K characters.",
+        problem_type="bfs",
+        min_prompt_chars=0,
+        max_prompt_chars=128000,
+    ),
+    "graphwalks_bfs_256k_1m": GraphwalksBenchmark(
+        key="graphwalks_bfs_256k_1m",
+        display_name="Graphwalks BFS 256K-1M",
+        description="OpenAI Graphwalks breadth-first search tasks with 256K-1M character prompts.",
+        problem_type="bfs",
+        min_prompt_chars=256000,
+        max_prompt_chars=1000000,
+    ),
+    "graphwalks_parents_0_128k": GraphwalksBenchmark(
+        key="graphwalks_parents_0_128k",
+        display_name="Graphwalks Parents 0K-128K",
+        description="OpenAI Graphwalks parent-retrieval tasks with prompts up to 128K characters.",
+        problem_type="parents",
+        min_prompt_chars=0,
+        max_prompt_chars=128000,
+    ),
+    "graphwalks_parents_256k_1m": GraphwalksBenchmark(
+        key="graphwalks_parents_256k_1m",
+        display_name="Graphwalks Parents 256K-1M",
+        description="OpenAI Graphwalks parent-retrieval tasks with 256K-1M character prompts.",
+        problem_type="parents",
+        min_prompt_chars=256000,
+        max_prompt_chars=1000000,
+    ),
+    "mrcr_v2_8needle_4k_8k": MRCRBenchmark(
+        key="mrcr_v2_8needle_4k_8k",
+        display_name="OpenAI MRCR v2 8-needle 4K-8K",
+        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 4K-8K contexts.",
+        n_needles=8,
+        min_chars=4096,
+        max_chars=8192,
+    ),
+    "mrcr_v2_8needle_8k_16k": MRCRBenchmark(
+        key="mrcr_v2_8needle_8k_16k",
+        display_name="OpenAI MRCR v2 8-needle 8K-16K",
+        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 8K-16K contexts.",
+        n_needles=8,
+        min_chars=8192,
+        max_chars=16384,
+    ),
+    "mrcr_v2_8needle_16k_32k": MRCRBenchmark(
+        key="mrcr_v2_8needle_16k_32k",
+        display_name="OpenAI MRCR v2 8-needle 16K-32K",
+        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 16K-32K contexts.",
+        n_needles=8,
+        min_chars=16384,
+        max_chars=32768,
+    ),
+    "mrcr_v2_8needle_32k_64k": MRCRBenchmark(
+        key="mrcr_v2_8needle_32k_64k",
+        display_name="OpenAI MRCR v2 8-needle 32K-64K",
+        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 32K-64K contexts.",
+        n_needles=8,
+        min_chars=32768,
+        max_chars=65536,
+    ),
+    "mrcr_v2_8needle_64k_128k": MRCRBenchmark(
+        key="mrcr_v2_8needle_64k_128k",
+        display_name="OpenAI MRCR v2 8-needle 64K-128K",
+        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 64K-128K contexts.",
+        n_needles=8,
+        min_chars=65536,
+        max_chars=131072,
+    ),
+    "mrcr_v2_8needle_128k_256k": MRCRBenchmark(
+        key="mrcr_v2_8needle_128k_256k",
+        display_name="OpenAI MRCR v2 8-needle 128K-256K",
+        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 128K-256K contexts.",
+        n_needles=8,
+        min_chars=131072,
+        max_chars=262144,
+    ),
+    "mrcr_v2_8needle_256k_512k": MRCRBenchmark(
+        key="mrcr_v2_8needle_256k_512k",
+        display_name="OpenAI MRCR v2 8-needle 256K-512K",
+        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 256K-512K contexts.",
+        n_needles=8,
+        min_chars=262144,
+        max_chars=524288,
+    ),
+    "mrcr_v2_8needle_512k_1m": MRCRBenchmark(
+        key="mrcr_v2_8needle_512k_1m",
+        display_name="OpenAI MRCR v2 8-needle 512K-1M",
+        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 512K-1M contexts.",
+        n_needles=8,
+        min_chars=524288,
+        max_chars=1048577,
+    ),
 }
 
 BENCHMARK_SUITES: Dict[str, Dict[str, Any]] = {
@@ -861,17 +1365,78 @@ BENCHMARK_SUITES: Dict[str, Dict[str, Any]] = {
     "core_suite": {
         "display_name": "Core Suite",
         "description": "Balanced default suite for serious local benchmarking.",
-        "benchmarks": ["gsm8k", "mmlu", "arc_challenge", "hellaswag", "winogrande", "boolq", "commonsense_qa"],
+        "benchmarks": ["gsm8k", "mmlu", "arc_challenge", "hellaswag", "winogrande", "boolq", "commonsense_qa", "piqa"],
     },
     "knowledge_suite": {
         "display_name": "Knowledge Suite",
         "description": "Knowledge-heavy evaluation with factual and multiple-choice tasks.",
         "benchmarks": ["mmlu", "mmlu_pro", "boolq", "truthfulqa_mc1", "openbookqa", "commonsense_qa"],
     },
+    "commonsense_suite": {
+        "display_name": "Commonsense Suite",
+        "description": "Broad commonsense and physical/social reasoning coverage.",
+        "benchmarks": ["hellaswag", "winogrande", "commonsense_qa", "openbookqa", "piqa", "social_iqa"],
+    },
     "reasoning_suite": {
         "display_name": "Reasoning Suite",
         "description": "Math, reasoning, and BBH-style tasks.",
-        "benchmarks": ["gsm8k", "math", "arc_challenge", "winogrande", "bbh_boolean_expressions"],
+        "benchmarks": ["gsm8k", "math", "aime_2024", "aime_2025", "arc_challenge", "winogrande", "piqa", "bbh_boolean_expressions"],
+    },
+    "competition_math_suite": {
+        "display_name": "Competition Math Suite",
+        "description": "Math-heavy benchmarking with GSM8K, Hendrycks MATH, and AIME.",
+        "benchmarks": ["gsm8k", "math", "aime_2024", "aime_2025"],
+    },
+    "long_context_suite": {
+        "display_name": "Long Context Suite",
+        "description": "Public long-context retrieval and graph reasoning benchmarks aligned with frontier reporting.",
+        "benchmarks": [
+            "graphwalks_bfs_0_128k",
+            "graphwalks_bfs_256k_1m",
+            "graphwalks_parents_0_128k",
+            "graphwalks_parents_256k_1m",
+            "mrcr_v2_8needle_4k_8k",
+            "mrcr_v2_8needle_8k_16k",
+            "mrcr_v2_8needle_16k_32k",
+            "mrcr_v2_8needle_32k_64k",
+            "mrcr_v2_8needle_64k_128k",
+            "mrcr_v2_8needle_128k_256k",
+            "mrcr_v2_8needle_256k_512k",
+            "mrcr_v2_8needle_512k_1m",
+        ],
+    },
+    "openai_public_suite": {
+        "display_name": "OpenAI Public Suite",
+        "description": "Runnable public benchmarks that map closely to recent OpenAI benchmark disclosures.",
+        "benchmarks": [
+            "aime_2024",
+            "aime_2025",
+            "graphwalks_bfs_0_128k",
+            "graphwalks_parents_0_128k",
+            "mrcr_v2_8needle_4k_8k",
+            "mrcr_v2_8needle_8k_16k",
+            "mrcr_v2_8needle_16k_32k",
+        ],
+    },
+    "frontier_report_suite": {
+        "display_name": "Frontier Report Suite",
+        "description": "Local-only subset aligned with commonly reported public frontier benchmarks.",
+        "benchmarks": [
+            "gsm8k",
+            "mmlu",
+            "mmlu_pro",
+            "math",
+            "aime_2024",
+            "aime_2025",
+            "arc_challenge",
+            "hellaswag",
+            "winogrande",
+            "boolq",
+            "piqa",
+            "graphwalks_bfs_0_128k",
+            "graphwalks_parents_0_128k",
+            "mrcr_v2_8needle_4k_8k",
+        ],
     },
     "serious_suite": {
         "display_name": "Serious Suite",
@@ -881,14 +1446,21 @@ BENCHMARK_SUITES: Dict[str, Dict[str, Any]] = {
             "mmlu",
             "mmlu_pro",
             "math",
+            "aime_2024",
+            "aime_2025",
             "arc_challenge",
             "hellaswag",
             "winogrande",
             "boolq",
             "commonsense_qa",
+            "piqa",
+            "social_iqa",
             "openbookqa",
             "truthfulqa_mc1",
             "bbh_boolean_expressions",
+            "graphwalks_bfs_0_128k",
+            "graphwalks_parents_0_128k",
+            "mrcr_v2_8needle_4k_8k",
         ],
     },
     "all_benchmarks": {
@@ -902,17 +1474,190 @@ SUITE_ALIASES = {
     "quick": "quick_suite",
     "core": "core_suite",
     "knowledge": "knowledge_suite",
+    "commonsense": "commonsense_suite",
     "reasoning": "reasoning_suite",
+    "competition_math": "competition_math_suite",
+    "long_context": "long_context_suite",
+    "openai_public": "openai_public_suite",
+    "frontier": "frontier_report_suite",
     "serious": "serious_suite",
     "all": "all_benchmarks",
 }
 
 DEFAULT_BENCHMARKS = list(BENCHMARK_SUITES["core_suite"]["benchmarks"])
 
+SUPPORTED_BENCHMARK_LABS: Dict[str, Tuple[str, ...]] = {
+    "aime_2024": ("openai", "google"),
+    "aime_2025": ("openai", "google"),
+    "graphwalks_bfs_0_128k": ("openai",),
+    "graphwalks_bfs_256k_1m": ("openai",),
+    "graphwalks_parents_0_128k": ("openai",),
+    "graphwalks_parents_256k_1m": ("openai",),
+    "mrcr_v2_8needle_4k_8k": ("openai",),
+    "mrcr_v2_8needle_8k_16k": ("openai",),
+    "mrcr_v2_8needle_16k_32k": ("openai",),
+    "mrcr_v2_8needle_32k_64k": ("openai",),
+    "mrcr_v2_8needle_64k_128k": ("openai",),
+    "mrcr_v2_8needle_128k_256k": ("openai",),
+    "mrcr_v2_8needle_256k_512k": ("openai",),
+    "mrcr_v2_8needle_512k_1m": ("openai",),
+}
+
+SUPPORTED_BENCHMARK_NOTES: Dict[str, str] = {
+    "aime_2024": "Public dataset adapter for the 2024 AIME competition problems.",
+    "aime_2025": "Public dataset adapter for the 2025 AIME competition problems.",
+    "graphwalks_bfs_0_128k": "Public OpenAI graph reasoning dataset sliced to the benchmarked prompt-length band.",
+    "graphwalks_bfs_256k_1m": "Public OpenAI graph reasoning dataset sliced to the benchmarked prompt-length band.",
+    "graphwalks_parents_0_128k": "Public OpenAI graph reasoning dataset sliced to the benchmarked prompt-length band.",
+    "graphwalks_parents_256k_1m": "Public OpenAI graph reasoning dataset sliced to the benchmarked prompt-length band.",
+    "mrcr_v2_8needle_4k_8k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
+    "mrcr_v2_8needle_8k_16k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
+    "mrcr_v2_8needle_16k_32k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
+    "mrcr_v2_8needle_32k_64k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
+    "mrcr_v2_8needle_64k_128k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
+    "mrcr_v2_8needle_128k_256k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
+    "mrcr_v2_8needle_256k_512k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
+    "mrcr_v2_8needle_512k_1m": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
+}
+
+
+SUPPORTED_BENCHMARK_CATALOG: Dict[str, BenchmarkCatalogEntry] = {
+    key: BenchmarkCatalogEntry(
+        key=benchmark.key,
+        display_name=benchmark.display_name,
+        description=benchmark.description,
+        category=benchmark.category,
+        status="runnable_local",
+        harness="single_turn_local_prompt",
+        local_runnable=True,
+        dataset_name=benchmark.dataset_name,
+        config_name=benchmark.config_name,
+        split=benchmark.split,
+        labs=SUPPORTED_BENCHMARK_LABS.get(key, ()),
+        notes=SUPPORTED_BENCHMARK_NOTES.get(key, ""),
+    )
+    for key, benchmark in SUPPORTED_BENCHMARKS.items()
+}
+
+TRACKED_BENCHMARK_CATALOG: Dict[str, BenchmarkCatalogEntry] = {
+    "gpqa_diamond": BenchmarkCatalogEntry(
+        key="gpqa_diamond",
+        display_name="GPQA Diamond",
+        description="Graduate-level science QA benchmark used by major labs.",
+        category="knowledge",
+        status="planned_local_adapter",
+        harness="multiple_choice_dataset_adapter",
+        local_runnable=False,
+        labs=("openai", "google", "meta"),
+    ),
+    "swe_bench_verified": BenchmarkCatalogEntry(
+        key="swe_bench_verified",
+        display_name="SWE-bench Verified",
+        description="Real software engineering benchmark over issue-fix tasks.",
+        category="coding",
+        status="external_agent_harness",
+        harness="repo_task_execution_harness",
+        local_runnable=False,
+        labs=("openai", "anthropic", "google"),
+        notes="Requires repository setup, test execution, and agent-style patch evaluation.",
+    ),
+    "codeforces": BenchmarkCatalogEntry(
+        key="codeforces",
+        display_name="Codeforces",
+        description="Competitive programming benchmark used in reasoning model reports.",
+        category="coding",
+        status="external_agent_harness",
+        harness="competitive_programming_harness",
+        local_runnable=False,
+        labs=("openai",),
+    ),
+    "mmmu": BenchmarkCatalogEntry(
+        key="mmmu",
+        display_name="MMMU",
+        description="Massive multimodal benchmark over charts, diagrams, and academic questions.",
+        category="multimodal",
+        status="external_multimodal_harness",
+        harness="vision_language_eval_harness",
+        local_runnable=False,
+        labs=("openai", "meta"),
+    ),
+    "video_mme": BenchmarkCatalogEntry(
+        key="video_mme",
+        display_name="Video-MME",
+        description="Video understanding benchmark cited for multimodal frontier models.",
+        category="multimodal",
+        status="external_multimodal_harness",
+        harness="video_eval_harness",
+        local_runnable=False,
+        labs=("openai",),
+    ),
+    "healthbench": BenchmarkCatalogEntry(
+        key="healthbench",
+        display_name="HealthBench",
+        description="Medical conversation benchmark introduced by OpenAI.",
+        category="safety",
+        status="restricted_or_specialized",
+        harness="specialized_medical_grader",
+        local_runnable=False,
+        labs=("openai",),
+    ),
+    "healthbench_hard": BenchmarkCatalogEntry(
+        key="healthbench_hard",
+        display_name="HealthBench Hard",
+        description="Hard subset of HealthBench for unsaturated medical evaluation.",
+        category="safety",
+        status="restricted_or_specialized",
+        harness="specialized_medical_grader",
+        local_runnable=False,
+        labs=("openai",),
+    ),
+    "tau_bench": BenchmarkCatalogEntry(
+        key="tau_bench",
+        display_name="TauBench",
+        description="Tool-use and policy-following benchmark over realistic service domains.",
+        category="agentic",
+        status="external_agent_harness",
+        harness="tool_use_environment",
+        local_runnable=False,
+        labs=("anthropic",),
+    ),
+    "humanitys_last_exam": BenchmarkCatalogEntry(
+        key="humanitys_last_exam",
+        display_name="Humanity's Last Exam",
+        description="Expert-level benchmark used to stress frontier reasoning models.",
+        category="reasoning",
+        status="planned_local_adapter",
+        harness="expert_qa_dataset_adapter",
+        local_runnable=False,
+        labs=("google",),
+    ),
+    "multi_challenge": BenchmarkCatalogEntry(
+        key="multi_challenge",
+        display_name="MultiChallenge",
+        description="Instruction-following benchmark reported in OpenAI GPT-4.1 launch materials.",
+        category="instruction_following",
+        status="planned_local_adapter",
+        harness="instruction_following_harness",
+        local_runnable=False,
+        labs=("openai",),
+    ),
+}
+
+BENCHMARK_CATALOG: Dict[str, BenchmarkCatalogEntry] = {
+    **SUPPORTED_BENCHMARK_CATALOG,
+    **TRACKED_BENCHMARK_CATALOG,
+}
+
 
 def get_supported_benchmark(name: str) -> DatasetBenchmark:
     """Return a supported benchmark or raise a clear error."""
     if name not in SUPPORTED_BENCHMARKS:
+        if name in BENCHMARK_CATALOG:
+            entry = BENCHMARK_CATALOG[name]
+            raise ValueError(
+                f"Benchmark '{name}' is tracked by smaLLMs but is not locally runnable yet "
+                f"(status: {entry.status}, harness: {entry.harness})."
+            )
         supported = ", ".join(sorted(SUPPORTED_BENCHMARKS))
         raise ValueError(f"Unsupported benchmark '{name}'. Supported benchmarks: {supported}")
     return SUPPORTED_BENCHMARKS[name]
@@ -930,8 +1675,14 @@ def expand_benchmark_selection(selection: Optional[Sequence[str]]) -> List[str]:
             expanded.extend(BENCHMARK_SUITES[key]["benchmarks"])
         elif key in SUPPORTED_BENCHMARKS:
             expanded.append(key)
+        elif key in TRACKED_BENCHMARK_CATALOG:
+            entry = TRACKED_BENCHMARK_CATALOG[key]
+            raise ValueError(
+                f"Benchmark '{item}' is tracked but not locally runnable yet "
+                f"(status: {entry.status}, harness: {entry.harness})."
+            )
         else:
-            supported = ", ".join(sorted(list(SUPPORTED_BENCHMARKS) + list(BENCHMARK_SUITES)))
+            supported = ", ".join(sorted(list(BENCHMARK_CATALOG) + list(BENCHMARK_SUITES)))
             raise ValueError(f"Unknown benchmark or suite '{item}'. Supported names: {supported}")
 
     deduped: List[str] = []
@@ -944,17 +1695,20 @@ def expand_benchmark_selection(selection: Optional[Sequence[str]]) -> List[str]:
 def list_supported_benchmarks() -> List[Dict[str, Any]]:
     """Return benchmark metadata for the local pipeline."""
     return [
-        {
-            "key": benchmark.key,
-            "display_name": benchmark.display_name,
-            "description": benchmark.description,
-            "category": benchmark.category,
-            "dataset_name": benchmark.dataset_name,
-            "config_name": benchmark.config_name,
-            "split": benchmark.split,
-        }
-        for benchmark in SUPPORTED_BENCHMARKS.values()
+        SUPPORTED_BENCHMARK_CATALOG[key].to_dict()
+        for key in SUPPORTED_BENCHMARKS
     ]
+
+
+def list_benchmark_catalog(runnable_only: bool = False) -> List[Dict[str, Any]]:
+    """Return the full benchmark catalog, including tracked frontier evals."""
+    entries = [
+        entry.to_dict()
+        for entry in BENCHMARK_CATALOG.values()
+        if not runnable_only or entry.local_runnable
+    ]
+    entries.sort(key=lambda item: (not item["local_runnable"], item["category"], item["key"]))
+    return entries
 
 
 def list_benchmark_suites() -> List[Dict[str, Any]]:

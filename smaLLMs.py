@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-smaLLMs - CLI-first local benchmarking for Ollama models.
+smaLLMs - CLI-first local benchmarking for local model runtimes.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ sys.path.append(str(Path(__file__).parent))
 from src.pipeline.benchmarks import (
     DEFAULT_BENCHMARKS,
     expand_benchmark_selection,
+    list_benchmark_catalog,
     list_benchmark_suites,
     list_supported_benchmarks,
 )
@@ -201,7 +202,7 @@ class BeautifulSmaLLMsTerminal:
 
         print(
             f"\n{self.CYAN}->{self.RESET}  {self.BOLD}smaLLMs{self.RESET} "
-            f"{self.GRAY}local ollama benchmarking{self.RESET} "
+            f"{self.GRAY}local model benchmarking{self.RESET} "
             f"{self.RED}x{self.RESET} {self.WHITE}CLI-first leaderboard runner{self.RESET}"
         )
         print(f"{self.GRAY}Run {self.run_id} | elapsed {self.format_duration(elapsed)}{self.RESET}\n")
@@ -291,60 +292,79 @@ class SmaLLMsCLI:
             f"""
 {self.terminal.CYAN}╔══════════════════════════════════════════════════════════════════════════════╗
 ║                          {self.terminal.BOLD}smaLLMs Local CLI{self.terminal.RESET}{self.terminal.CYAN}                                   ║
-║                  {self.terminal.GRAY}Ollama-first local LLM benchmark runner{self.terminal.RESET}{self.terminal.CYAN}                      ║
+║                  {self.terminal.GRAY}Cross-platform local LLM benchmark runner{self.terminal.RESET}{self.terminal.CYAN}                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝{self.terminal.RESET}
 
 {self.terminal.BOLD}Commands:{self.terminal.RESET}
-  {self.terminal.GREEN}discover{self.terminal.RESET}   - Find local Ollama models
-  {self.terminal.GREEN}benchmarks{self.terminal.RESET} - Show real supported benchmarks and suites
-  {self.terminal.GREEN}run{self.terminal.RESET}        - Interactive benchmark run
+  {self.terminal.GREEN}discover{self.terminal.RESET}   - Find local models across supported providers
+  {self.terminal.GREEN}benchmarks{self.terminal.RESET} - Show runnable benchmarks and tracked frontier evals
+  {self.terminal.GREEN}run{self.terminal.RESET}        - Start a benchmark run
   {self.terminal.GREEN}quick{self.terminal.RESET}      - Run the default core suite on all discovered models
   {self.terminal.GREEN}status{self.terminal.RESET}     - Show the latest run summary
   {self.terminal.GREEN}export{self.terminal.RESET}     - Export the latest run for the website
   {self.terminal.GREEN}clear{self.terminal.RESET}      - Clear the screen
   {self.terminal.GREEN}exit{self.terminal.RESET}       - Quit
 
+{self.terminal.BOLD}Interactive Mode:{self.terminal.RESET} arrow keys, space to toggle, enter to confirm
 {self.terminal.BOLD}Default Core Suite:{self.terminal.RESET} {", ".join(DEFAULT_BENCHMARKS)}
 """
         )
 
-    async def discover_models(self, json_output: bool = False) -> List[Dict[str, Any]]:
-        """Discover local Ollama models."""
+    async def discover_models(self, json_output: bool = False) -> Dict[str, List[Dict[str, Any]]]:
+        """Discover local models across supported providers."""
         orchestrator = self._get_orchestrator()
         discovered = await orchestrator.discover_local_models()
-        models = discovered.get("ollama", [])
 
         if json_output:
-            print(json.dumps(models, indent=2))
-            return models
+            print(json.dumps(discovered, indent=2))
+            return discovered
 
-        print(f"\n{self.terminal.BOLD}Local Ollama Models{self.terminal.RESET}")
-        if not models:
-            print(f"{self.terminal.YELLOW}No Ollama models found.{self.terminal.RESET}")
-            return models
+        print(f"\n{self.terminal.BOLD}Local Model Discovery{self.terminal.RESET}")
+        total_models = 0
+        for provider in ["ollama", "lm_studio"]:
+            models = discovered.get(provider, [])
+            total_models += len(models)
+            print(f"\n{self.terminal.CYAN}{provider}{self.terminal.RESET} ({len(models)})")
+            if not models:
+                print(f"  {self.terminal.GRAY}No models found.{self.terminal.RESET}")
+                continue
 
-        for index, model in enumerate(models, start=1):
-            details = [
-                f"{model['size_gb']:.1f}GB" if model.get("size_gb") else None,
-                model.get("parameters"),
-                model.get("family"),
-                model.get("quantization"),
-            ]
-            details = [item for item in details if item and item != "unknown"]
-            detail_text = " | ".join(details) if details else "metadata unavailable"
-            print(f"  {index:>2}. {model['name']}  {self.terminal.GRAY}{detail_text}{self.terminal.RESET}")
-        return models
+            for index, model in enumerate(models, start=1):
+                details = [
+                    f"{float(model.get('size_gb') or 0.0):.1f}GB" if model.get("size_gb") else None,
+                    model.get("parameters"),
+                    model.get("family"),
+                    model.get("quantization"),
+                ]
+                details = [item for item in details if item and item != "unknown"]
+                detail_text = " | ".join(details) if details else "metadata unavailable"
+                print(f"  {index:>2}. {model['name']}  {self.terminal.GRAY}{detail_text}{self.terminal.RESET}")
+
+        if total_models == 0:
+            print(f"\n{self.terminal.YELLOW}No reachable local models found.{self.terminal.RESET}")
+        return discovered
 
     def show_benchmarks(self, json_output: bool = False) -> None:
         """Print benchmark and suite metadata."""
-        benchmarks = list_supported_benchmarks()
+        runnable = list_supported_benchmarks()
+        catalog = list_benchmark_catalog()
+        tracked = [entry for entry in catalog if not entry["local_runnable"]]
         suites = list_benchmark_suites()
 
         if json_output:
-            print(json.dumps({"suites": suites, "benchmarks": benchmarks}, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "suites": suites,
+                        "runnable_benchmarks": runnable,
+                        "tracked_benchmarks": tracked,
+                    },
+                    indent=2,
+                )
+            )
             return
 
-        print(f"\n{self.terminal.BOLD}Benchmark Suites{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD}Runnable Benchmark Suites{self.terminal.RESET}")
         for suite in suites:
             print(
                 f"  {self.terminal.CYAN}{suite['key']}{self.terminal.RESET} - "
@@ -352,11 +372,21 @@ class SmaLLMsCLI:
             )
             print(f"      {', '.join(suite['benchmarks'])}")
 
-        print(f"\n{self.terminal.BOLD}Supported Benchmarks{self.terminal.RESET}")
-        for benchmark in benchmarks:
+        print(f"\n{self.terminal.BOLD}Runnable Local Benchmarks{self.terminal.RESET}")
+        for benchmark in runnable:
             print(
                 f"  {self.terminal.GREEN}{benchmark['key']}{self.terminal.RESET} "
                 f"[{benchmark['category']}] - {benchmark['display_name']}: {benchmark['description']}"
+            )
+
+        print(f"\n{self.terminal.BOLD}Tracked Frontier Benchmarks{self.terminal.RESET}")
+        for benchmark in tracked:
+            status = benchmark["status"].replace("_", " ")
+            harness = benchmark["harness"].replace("_", " ")
+            labs = f" | labs: {', '.join(benchmark.get('labs', []))}" if benchmark.get("labs") else ""
+            print(
+                f"  {self.terminal.YELLOW}{benchmark['key']}{self.terminal.RESET} "
+                f"[{status}] - {benchmark['display_name']}: {harness}{labs}"
             )
 
     def show_status(self, json_output: bool = False) -> None:
@@ -479,9 +509,12 @@ class SmaLLMsCLI:
 
         if not models:
             discovered = await orchestrator.discover_local_models()
-            models = [entry["name"] for entry in discovered.get("ollama", [])]
+            if all_local:
+                models = [entry["name"] for entries in discovered.values() for entry in entries]
+            else:
+                models = [entry["name"] for entry in discovered.get("ollama", [])]
         if not models:
-            raise RuntimeError("No local Ollama models found. Pull a model first or pass --models explicitly.")
+            raise RuntimeError("No local models found. Start Ollama or LM Studio, or pass --models explicitly.")
 
         sample_count = samples or int(self.config.get("local_benchmarks", {}).get("default_samples", 10))
         run_id = f"pending_{int(time.time())}"
@@ -514,10 +547,10 @@ class SmaLLMsCLI:
 
     async def run_interactive_benchmark(self) -> None:
         """Run the interactive benchmark workflow."""
-        discovered = await self.orchestrator.discover_local_models()
-        models = discovered.get("ollama", [])
+        discovered = await self._get_orchestrator().discover_local_models()
+        models = discovered.get("ollama", []) + discovered.get("lm_studio", [])
         if not models:
-            print(f"{self.terminal.YELLOW}No Ollama models found.{self.terminal.RESET}")
+            print(f"{self.terminal.YELLOW}No local models found.{self.terminal.RESET}")
             return
 
         selected_models = self._prompt_model_selection(models)
@@ -537,10 +570,24 @@ class SmaLLMsCLI:
             benchmarks=list(DEFAULT_BENCHMARKS),
             samples=samples,
             export_after_run=True,
+            all_local=True,
         )
 
     def run_interactive(self) -> None:
-        """Run the interactive command loop."""
+        """Run the default interactive UI."""
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            try:
+                from src.cli.terminal_menu import TerminalMenuApp
+
+                TerminalMenuApp(self).run()
+                return
+            except Exception as exc:
+                print(f"{self.terminal.YELLOW}Arrow-key mode unavailable: {exc}{self.terminal.RESET}")
+
+        self._run_command_shell()
+
+    def _run_command_shell(self) -> None:
+        """Fallback interactive command loop for non-TTY environments."""
         self.print_welcome()
 
         while True:
@@ -574,19 +621,19 @@ class SmaLLMsCLI:
 
 def build_parser() -> argparse.ArgumentParser:
     """Construct the top-level CLI parser."""
-    parser = argparse.ArgumentParser(description="smaLLMs local CLI for benchmarking Ollama models.")
+    parser = argparse.ArgumentParser(description="smaLLMs local CLI for benchmarking local LLMs.")
     parser.add_argument("--config", default="config/config.yaml", help="Path to the YAML config file.")
     parser.add_argument(
         "command",
         nargs="?",
         default="interactive",
-        choices=["interactive", "discover", "discover-local", "benchmarks", "run", "local-run", "quick", "status", "export"],
+        choices=["interactive", "menu", "discover", "discover-local", "benchmarks", "run", "local-run", "quick", "status", "export"],
         help="Command to run.",
     )
     parser.add_argument("--models", nargs="*", help="Model names. Supports repeated flags or comma-separated values.")
     parser.add_argument("--benchmarks", nargs="*", help="Benchmark or suite names. Supports repeated flags or comma-separated values.")
     parser.add_argument("--samples", type=int, help="Samples per benchmark.")
-    parser.add_argument("--all-local", action="store_true", help="Run across all discovered local Ollama models.")
+    parser.add_argument("--all-local", action="store_true", help="Run across all discovered local models.")
     parser.add_argument("--no-export", action="store_true", help="Skip website export after a run.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON for discover/benchmarks/status.")
     parser.add_argument("--run-id", help="Run id for export; defaults to the latest run.")
@@ -604,7 +651,7 @@ def main() -> None:
     benchmarks = _parse_list(args.benchmarks)
 
     try:
-        if command == "interactive":
+        if command in {"interactive", "menu"}:
             app.run_interactive()
         elif command in {"discover", "discover-local"}:
             asyncio.run(app.discover_models(json_output=args.json))

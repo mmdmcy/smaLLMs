@@ -1,419 +1,215 @@
-# smaLLMs - Local Ollama Benchmark CLI
+# smaLLMs
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Ollama](https://img.shields.io/badge/-Ollama-blue)](https://ollama.ai/)
-[![CLI First](https://img.shields.io/badge/-CLI%20First-black)](https://github.com/mmdmcy/smaLLMs)
-[![Local Only](https://img.shields.io/badge/-Local%20Only-green)](https://github.com/mmdmcy/smaLLMs)
+[![CLI Only](https://img.shields.io/badge/interface-terminal-black)](https://github.com/mmdmcy/smaLLMs)
+[![Local First](https://img.shields.io/badge/runtime-local%20first-green)](https://github.com/mmdmcy/smaLLMs)
 
-> CLI-first local LLM benchmarking for Ollama models.
-> Real benchmark datasets, stable website exports, and cross-platform use on Windows, Linux, and WSL.
+CLI-only local LLM benchmarking with a real benchmark catalog, live terminal progress, and structured artifacts for local leaderboards.
 
-![smaLLMs Demo](https://img.shields.io/badge/Status-Active-blue) ![Benchmarks](https://img.shields.io/badge/Benchmarks-13-orange) ![Exports](https://img.shields.io/badge/Website%20Export-Stable-green)
+smaLLMs is built for:
+- local models running through Ollama or LM Studio
+- cross-platform terminal use on macOS, Linux, Windows 11, and WSL
+- reproducible benchmark runs with raw sample artifacts
+- honest reporting about which benchmarks are runnable today versus only tracked for future support
 
-## What is smaLLMs?
+## What smaLLMs is trying to be
 
-**smaLLMs** is an Ollama-first local benchmark runner with a serious dataset-backed benchmark catalog and a stable export format for leaderboards and websites.
+Not a toy wrapper around a few prompts.
 
-> Current recommended workflow:
-> - Use `smaLLMs.py` as the main CLI.
-> - You do **not** need a Hugging Face inference API key to benchmark local models.
-> - Hugging Face is still used for benchmark datasets unless you cache them locally first.
-> - The supported local benchmark path currently ships with real benchmark suites built from: `gsm8k`, `mmlu`, `mmlu_pro`, `math`, `arc_challenge`, `arc_easy`, `hellaswag`, `winogrande`, `boolq`, `commonsense_qa`, `openbookqa`, `truthfulqa_mc1`, and `bbh_boolean_expressions`.
-> - Run artifacts are written to `artifacts/runs/<run_id>/` and website bundles to `website_exports/latest/`.
+smaLLMs is meant to become a serious open benchmarking CLI for local models. That means:
+- the default interface is the terminal, not a web app
+- the interactive mode uses arrow keys and multi-select menus
+- benchmark runs emit machine-readable artifacts for downstream sites and leaderboards
+- the benchmark catalog distinguishes runnable local evals from frontier evals that still require specialized harnesses
 
-## Recommended Quick Start
+## Current runtime support
 
-### Windows 11 + Ollama
+Supported local providers:
+- Ollama
+- LM Studio
+
+Platform targets:
+- macOS
+- Linux
+- Windows 11
+- WSL with Windows-hosted Ollama fallback support
+
+## Benchmark model
+
+### Runnable local benchmarks
+
+These ship in the local runner today:
+
+- `gsm8k`
+- `mmlu`
+- `mmlu_pro`
+- `math`
+- `arc_challenge`
+- `arc_easy`
+- `hellaswag`
+- `winogrande`
+- `boolq`
+- `commonsense_qa`
+- `piqa`
+- `social_iqa`
+- `openbookqa`
+- `truthfulqa_mc1`
+- `bbh_boolean_expressions`
+
+### Tracked frontier benchmarks
+
+These are included in the catalog because major labs report them, but smaLLMs does not pretend they are locally runnable yet:
+
+- `aime_2024`
+- `aime_2025`
+- `gpqa_diamond`
+- `swe_bench_verified`
+- `codeforces`
+- `mmmu`
+- `video_mme`
+- `healthbench`
+- `healthbench_hard`
+- `tau_bench`
+- `humanitys_last_exam`
+- `multi_challenge`
+
+This distinction matters. Benchmarks like SWE-bench Verified, TauBench, MMMU, or HealthBench need agentic harnesses, multimodal graders, tool environments, or private/specialized evaluation pipelines. smaLLMs tracks them explicitly instead of faking support.
+
+## Quick start
+
+### 1. Install dependencies
+
+macOS / Linux / WSL:
+
+```bash
+python3 -m pip install -r requirements-local.txt
+```
+
+Full dependency set:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+Windows 11:
+
+```powershell
+py -3 -m pip install -r requirements-local.txt
+```
+
+Full dependency set:
 
 ```powershell
 py -3 -m pip install -r requirements.txt
-py -3 smaLLMs.py discover
-py -3 smaLLMs.py benchmarks
-py -3 smaLLMs.py run --all-local --benchmarks core_suite --samples 10
-py -3 smaLLMs.py export
 ```
 
-### Notes
+### 2. Start a local model runtime
 
-- Local Ollama runs measure your own hardware, not a remote provider.
-- Local runs use the Ollama API on `http://localhost:11434`.
-- From WSL, the runner can fall back to the Windows Ollama daemon through Windows-native API bridging when direct Linux localhost access is unavailable.
-- Hugging Face tokens are only needed for optional cloud inference comparisons, not for local Ollama execution.
-- The website export bundle is intentionally stable:
-  - `website_exports/latest/manifest.json`
-  - `website_exports/latest/summary.json`
-  - `website_exports/latest/leaderboard.json`
-  - `website_exports/latest/models.json`
-  - `website_exports/latest/benchmarks.json`
-  - `website_exports/latest/leaderboard.csv`
+For Ollama:
 
-### Key Features
-
-- **CLI First**: The main entrypoint is `python smaLLMs.py`
-- **Ollama First**: Local-only benchmarking path focused on real local execution
-- **Real Benchmarks**: Dataset-backed suites instead of placeholder marketing labels
-- **WSL Friendly**: Works with Windows-hosted Ollama from inside WSL
-- **Website Export**: Stable JSON, CSV, and HTML bundle for downstream sites
-- **Beautiful Interface**: Live terminal progress and clean run summaries
-
-## NEW: Marathon Mode + 16 AI Studio Benchmarks
-
-### **Marathon Mode**
-Run overnight comprehensive evaluation of ALL your models:
-- **Auto-Discovery**: Finds all 23+ local models (Ollama + LM Studio)
-- **Smart Selection**: Choose specific models or run ALL discovered models
-- **Benchmark Suites**: 18 different benchmark combinations to choose from
-- **Progress Tracking**: Real-time updates and resume capability
-- **Organized Results**: Clean date/time-based result organization
-- **Windows Compatible**: Full Unicode support and robust timeout handling
-
-### **16 AI Studio Benchmarks**
-Complete benchmark suite matching major AI companies:
-
-#### **Competition & Expert Level**
-- **AIME 2024/2025**: American Invitational Mathematics Examination (o3/o4 level)
-- **GPQA Diamond**: PhD-level science questions (Google-Proof Q&A) 
-- **Codeforces**: Competitive programming with ELO ratings
-- **HLE**: Humanity's Last Exam - Expert cross-domain evaluation
-- **HealthBench**: Medical conversation safety (includes Hard variant)
-- **TauBench**: Function calling and tool use evaluation
-
-#### **Core Academic Standards**
-- **GSM8K**: Grade school mathematics reasoning
-- **MMLU**: Massive multitask language understanding
-- **MATH**: Mathematical reasoning and competition problems
-- **HumanEval**: Code generation and programming capabilities
-- **ARC**: Abstract reasoning challenge
-- **HellaSwag**: Commonsense reasoning
-
-#### **Advanced Reasoning**
-- **WinoGrande**: Winograd schema challenge
-- **BoolQ**: Boolean question answering
-- **OpenBookQA**: Multi-step reasoning with facts
-- **PIQA**: Physical interaction question answering
-
-### **18 Benchmark Suites Available**
-- **Individual Benchmarks**: Any single benchmark (16 options)
-- **OpenAI Suite**: Complete o3/o4 benchmark set  
-- **Competition Suite**: AIME + Codeforces + MATH
-- **Expert Suite**: GPQA + HLE + HealthBench
-- **Academic Suite**: MMLU + GSM8K + HumanEval
-- **Reasoning Suite**: ARC + HellaSwag + WinoGrande
-- **Comprehensive Suite**: Best 8-benchmark coverage
-
-## Confirmed Working Local Models (23+)
-
-### **Ollama Models (15 discovered)**
-- **llama3.2** - Meta's latest compact models
-- **qwen2.5** - Alibaba's optimized instruction models  
-- **qwen2.5-coder** - Specialized coding variants
-- **granite3.2** - IBM's enterprise-ready models
-- **deepseek-r1** - Reasoning-focused models
-- **gemma-3** - Google's efficient instruction models
-- **liquid** - High-performance compact models
-- **And 8+ more automatically discovered**
-
-### **LM Studio Models (8 discovered)**  
-- **Meta Llama variants** - Multiple sizes and versions
-- **Qwen2.5 series** - Instruction and coder variants
-- **Google Gemma models** - Various parameter sizes
-- **Granite models** - IBM's latest offerings
-- **DeepSeek variants** - Reasoning and general models
-
-### **Cloud Models (HuggingFace)**
-All models from the original cloud configuration still supported for comparison.
-
-## Technology Stack
-
-### **Core Technologies**
-- **Python 3.8+**: Modern async/await patterns for concurrent evaluation
-- **HuggingFace Hub**: Direct API integration for model inference
-- **Datasets Library**: Standardized benchmark data loading
-- **AsyncIO**: Non-blocking concurrent model evaluation
-- **YAML**: Human-readable configuration management
-
-### **Data & Analytics**
-- **Pandas**: Data manipulation and analysis
-- **NumPy**: Numerical computing for metrics calculation
-- **SciPy**: Statistical analysis and significance testing
-- **Matplotlib/Seaborn**: Data visualization for reports
-
-### **Web & Interface**
-- **Gradio**: Optional web interface for interactive evaluation
-- **FastAPI**: REST API for programmatic access
-- **Beautiful Terminal**: Custom ANSI-colored terminal interface
-- **HTML Export**: Static website generation from results
-
-### **Evaluation Framework**
-- **Custom Benchmarks**: Modular benchmark system
-- **Async Model Manager**: Efficient model loading and inference
-- **Result Aggregation**: Statistical analysis and ranking
-- **Cost Estimation**: Real-time API cost tracking
-
-## Quick Start
-
-### 1. **Installation**
 ```bash
-git clone https://github.com/mmdmcy/smaLLMs.git
-cd smaLLMs
-pip install -r requirements.txt
-```
-
-### 2. **Setup Local Models (Optional)**
-```bash
-# Install Ollama (if you want local models)
-# Windows: Download from https://ollama.ai
-# Then pull some models:
+ollama serve
 ollama pull llama3.2
 ollama pull qwen2.5:0.5b
-ollama pull granite3.2:2b
-
-# Or use LM Studio: Download from https://lmstudio.ai
 ```
 
-### 3. **Configuration (Cloud models only)**
-```bash
-# Only needed if using cloud models
-cp config/config.example.yaml config/config.yaml
-# Add your HuggingFace token to config/config.yaml
-```
+Or start LM Studio with its local server enabled.
 
-### 4. **Run Marathon Mode**
-```bash
-python smaLLMs.py
-```
-
-**Marathon Mode Options:**
-- **Local**: Auto-discover and evaluate all Ollama + LM Studio models
-- **Cloud**: Evaluate HuggingFace models (requires config)
-- **Choose Models**: Select specific models from 23+ discovered
-- **Choose Benchmarks**: Pick from 18 benchmark suite options
-- **Run ALL**: Overnight evaluation of everything!
-
-### 5. **Export & Analysis**
-```bash
-python simple_exporter.py
-```
-Generate beautiful websites, leaderboards, and analysis reports from your Marathon Mode results.
-
-## Marathon Mode Performance
-
-| Setup | Models | Benchmarks | Samples | Duration | Use Case |
-|-------|--------|------------|---------|----------|----------|
-| **Quick Test** | 3 local | 2 core | 25 | ~15 min | Testing setup |
-| **Standard** | 8 local | 4 suites | 50 | ~2 hours | Daily evaluation |
-| **Comprehensive** | 15 local | 8 benchmarks | 100 | ~6 hours | Weekly analysis |
-| **Marathon ALL** | 23 models | 16 benchmarks | 200 | ~12 hours | Complete evaluation |
-
-*Local model evaluation is FREE - no API costs!*
-
-## Confirmed Working Models
-
-smaLLMs focuses on **reliability** with automatic model discovery:
-
-### **Local Models (FREE)** 
-**Auto-discovered from Ollama & LM Studio:**
-- **15 Ollama models** - Automatically detected and configured
-- **8 LM Studio models** - Seamlessly integrated
-- **Progressive timeouts** - Handles slower local inference
-- **Efficient caching** - Faster repeat evaluations
-
-### **Cloud Models (API Required)**   
-**Battle-tested HuggingFace models:**
-- `google/gemma-2-2b-it` - Google's efficient instruction model
-- `Qwen/Qwen2.5-1.5B-Instruct` - Alibaba's optimized model  
-- `meta-llama/Llama-3.2-1B-Instruct` - Meta's compact model
-- `HuggingFaceTB/SmolLM2-1.7B-Instruct` - HF's optimized model
-- *Plus 6 more proven models*
-
-*Marathon Mode automatically discovers your available models - no manual configuration needed!*
-
-## File Structure (Streamlined)
-
-```
-smaLLMs/
-├── smaLLMs.py              # Main Marathon Mode launcher (ALL-IN-ONE)
-├── intelligent_evaluator.py # Smart evaluation engine
-├── simple_exporter.py      # Results export & website generation
-├── beautiful_terminal.py   # Color terminal interface
-├── test_everything.py      # Comprehensive test suite (15 tests)
-├── check_local_services.py # Local model discovery utility
-├── config/
-│   ├── config.yaml            # Your configuration (cloud only)
-│   ├── config.example.yaml    # Example configuration
-│   └── models.yaml            # Model definitions
-├── src/                    # Core evaluation modules
-│   ├── models/                # Model management & discovery
-│   ├── benchmarks/            # 16 benchmark implementations
-│   ├── evaluator.py           # Evaluation orchestration
-│   ├── metrics/               # Result analysis & aggregation
-│   ├── utils/                 # Storage and utilities
-│   └── web/                   # Optional web interface
-└── smaLLMs_results/        # Marathon Mode results
-    └── 2025-MM-DD/            # Date-based organization
-        └── run_HHMMSS/        # Time-stamped runs
-            ├── individual_results/ # Raw benchmark data
-            ├── reports/           # Human-readable summaries
-            └── exports/           # Website/analysis exports
-```
-
-**Everything you need in 17 essential files - no bloat!**
-
-## How It Works
-
-### **1. Marathon Mode Discovery**
-```python
-# Automatic model discovery across platforms
-models = discover_local_models()  # Finds Ollama + LM Studio
-benchmarks = load_benchmark_suite()  # All 16 AI studio benchmarks
-```
-
-### **2. Intelligent Orchestration**
-- **Progressive Timeouts**: Adapts to local model inference speed
-- **Smart Sampling**: Optimizes evaluation depth based on model performance  
-- **Error Recovery**: Robust handling of model failures and timeouts
-- **Progress Tracking**: Real-time updates with beautiful terminal interface
-
-### **3. Local Model Integration**
-- **Ollama API**: Direct integration with local Ollama models
-- **LM Studio API**: Seamless connection to LM Studio inference server
-- **Unified Interface**: Same benchmarks work across all model types
-- **No API Costs**: Free evaluation of local models
-
-### **4. Organized Data Management**
-- **Auto Directory Creation**: Date/timestamp-based result organization
-- **Multiple Formats**: JSON for machines, human-readable summaries
-- **Export Ready**: One-click website and analysis generation
-- **Resume Capability**: Continue interrupted Marathon Mode runs
-
-## Cost Optimization & FREE Local Evaluation
-
-### **FREE Local Models** 
-Marathon Mode with local models is **completely FREE**:
-- **No API costs** for Ollama and LM Studio models
-- **Unlimited evaluations** - run as many benchmarks as you want
-- **23+ models available** - comprehensive local model comparison
-- **Perfect for research** and experimentation
-
-### **Cost-Efficient Cloud Models** 
-When using cloud APIs, smaLLMs is optimized for efficiency:
-- **Smart Sampling**: Don't waste tokens on failing models
-- **Progressive Evaluation**: Start small, scale for promising models  
-- **Rate Limiting**: Respect free tier limits
-- **Early Stopping**: Skip models that consistently fail
-
-**Typical cloud costs:**
-- Quick test (3 models, 2 benchmarks): ~$0.05
-- Standard evaluation (8 models, 4 benchmarks): ~$0.30
-- Comprehensive (15 models, 8 benchmarks): ~$1.20
-
-## Export & Integration
-
-### **Marathon Mode Results Export**
-```bash
-python simple_exporter.py
-```
-**Generates:**
-- **Beautiful Websites**: Interactive leaderboards and analysis
-- **Comparison Charts**: Visual model performance comparisons
-- **CSV/JSON Data**: Excel and analysis-ready formats
-- **Markdown Reports**: AI assistant and documentation ready
-- **Leaderboards**: Rank your local models against benchmarks
-
-### **Integration Ready**
-- **REST API**: Optional web interface (via FastAPI)
-- **JSON Data**: Machine-readable results for custom analysis
-- **Modular Architecture**: Easy to extend with custom benchmarks
-- **Plugin System**: Add new model providers and benchmarks
-
-## Configuration
-
-### **Local Models (No config needed!)**
-Marathon Mode automatically discovers your models:
-```bash
-# Just run it - no configuration required!
-python smaLLMs.py
-```
-
-### **Cloud Models (Optional)**
-```yaml
-# config/config.yaml (only if using cloud models)
-huggingface:
-  token: "your_hf_token_here"
-
-evaluation:
-  default_samples: 100
-  max_concurrent_requests: 3
-  
-marathon_mode:
-  local_models_enabled: true
-  auto_discovery: true
-  result_organization: "date_time"
-```
-
-### **Advanced Customization**
-- **Custom Benchmark Configurations**: Modify sample sizes and parameters
-- **Model-Specific Settings**: Timeout and generation configs per model
-- **Result Organization**: Customize directory structure and naming
-- **Export Formats**: Configure output formats and destinations
-
-## Get Started with Marathon Mode
+### 3. Launch the arrow-key terminal UI
 
 ```bash
-git clone https://github.com/mmdmcy/smaLLMs.git
-cd smaLLMs
-pip install -r requirements.txt
-python smaLLMs.py
+python3 smaLLMs.py
 ```
 
-**Choose your adventure:**
-1. **Local Models**: Auto-discover and evaluate all Ollama + LM Studio models (FREE!)
-2. **Cloud Models**: Add HuggingFace token and evaluate cloud models  
-3. **Marathon Mode**: Run ALL models with ALL 16 benchmarks overnight
-4. **Custom**: Pick specific models and benchmark suites
+The default interactive mode is terminal-native:
+- arrow keys to move
+- `space` to toggle multi-select items
+- `enter` to confirm
+- `q` or `esc` to go back
 
-**Join the local model revolution!** 
+## Non-interactive CLI
 
----
+Discover local models:
 
-## 🛠️ Technical Architecture & Engineering Highlights
+```bash
+python3 smaLLMs.py discover
+```
 
-*Engineered for performance, reliability, and extensibility.*
+Inspect suites and the benchmark catalog:
 
-### 🧠 Intelligent Orchestration Engine
-- **Adaptive Sampling Algorithm**: Implements a dynamic confidence-based sampling strategy. Instead of fixed sample sizes, the system analyzes real-time model reliability and accuracy to automatically adjust evaluation depth—increasing samples for promising models while "fail-fast" logic minimizes resource waste on poor performers.
-- **AsyncIO Concurrency**: Built on Python's `asyncio` event loop for non-blocking I/O. Uses `aiohttp` for high-concurrency API requests, enabling parallel evaluation of multiple models while maintaining responsive UI updates.
-- **Resource-Aware Scheduling**: Features an intelligent scheduler that manages system resources, enforcing rate limits (token bucket strategy) and implementing progressive timeouts that adapt to local inference latencies vs. cloud API speeds.
+```bash
+python3 smaLLMs.py benchmarks
+```
 
-### 🏗️ Robust System Design
-- **Unified Provider Abstraction**: Implements the **Strategy-Adapter Pattern** to normalize interfaces across disparate backends. Whether communicating with a local Ollama instance via REST, an LM Studio server, or the HuggingFace Cloud API, the core `ModelManager` treats them uniformly.
-- **Resilient Error Handling**: "Marathon Mode" is built with fault tolerance at its core. It includes automatic session recovery, checkpointing (serialization of intermediate states), and comprehensive exception handling to ensure overnight runs complete successfully even if individual models crash.
-- **Modular Benchmark System**: Uses a **Factory Pattern** for dynamic benchmark loading, allowing new test suites to be plugged in without modifying core orchestration logic.
+Run the default core suite on every discovered local model:
 
-### 📊 Data & Analytics Pipeline
-- **Real-time Analytics**: Computes streaming metrics including "Reliability Score" (0-1 confidence metric) and "Value Score" (Accuracy per Dollar) during execution.
-- **Structured Serialization**: Results are serialized into a hierarchical JSON structure with full metadata preservation, enabling historical trend analysis and long-term regression testing.
+```bash
+python3 smaLLMs.py quick --samples 3
+```
 
-## Contributing
+Run a specific suite:
 
-Help make smaLLMs even better:
+```bash
+python3 smaLLMs.py run --models llama3.2 qwen2.5:0.5b --benchmarks frontier_report_suite --samples 10
+```
 
-- **New Benchmarks**: Add domain-specific evaluation tasks
-- **Model Providers**: Integrate new local and cloud model platforms  
-- **Visualization**: Enhance Marathon Mode result analysis
-- **Performance**: Optimize local model inference and evaluation speed
+Export the latest artifacts:
 
-## License
+```bash
+python3 smaLLMs.py export
+```
 
-MIT License - see [LICENSE](LICENSE) for details.
+## Artifact outputs
 
-## Created By
+Each run writes structured artifacts to:
 
-**mmdmcy** - [GitHub](https://github.com/mmdmcy)
+- `artifacts/runs/<run_id>/`
 
-*Building comprehensive local model evaluation with Marathon Mode - because your local models deserve AI studio-level benchmarking.*
+Website-friendly bundles are exported to:
 
----
+- `website_exports/latest/`
+- `website_exports/runs/<run_id>/`
 
-*smaLLMs Marathon Mode - Run overnight evaluation of ALL your models with ALL benchmarks. Local is the new cloud.*
+Useful files:
+
+- `manifest.json`
+- `summary.json`
+- `leaderboard.json`
+- `leaderboard.csv`
+- per-model/per-benchmark sample JSONL artifacts
+
+## Benchmark suites
+
+Runnable suites currently include:
+
+- `quick_suite`
+- `core_suite`
+- `knowledge_suite`
+- `commonsense_suite`
+- `reasoning_suite`
+- `frontier_report_suite`
+- `serious_suite`
+- `all_benchmarks`
+
+## Project principles
+
+- Local-first: evaluate models on the user’s own hardware.
+- CLI-only: the terminal is the primary product surface.
+- Honest benchmark accounting: runnable versus tracked is explicit.
+- Open artifacts: every run should be exportable and inspectable.
+- Cross-platform pragmatism: no platform should be treated as second-class.
+
+## Current limitations
+
+- Some dependencies are required even for local discovery, including `aiohttp`.
+- `requirements-local.txt` is enough for the local-only CLI path; `requirements.txt` remains the broader environment.
+- Frontier agentic benchmarks are tracked in the catalog but not yet executed by the local runner.
+- Results are only as comparable as the local runtime settings and hardware conditions you keep consistent.
+
+## Short roadmap
+
+- add more locally runnable public benchmarks where apples-to-apples evaluation is possible
+- add dedicated harnesses for code and tool-use benchmarks
+- improve benchmark normalization and run metadata for publishable leaderboard workflows
+- keep the terminal experience first-class instead of bolting on a web UI

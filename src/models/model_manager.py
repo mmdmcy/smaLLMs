@@ -4,7 +4,6 @@ Provides unified interface for different model providers and endpoints.
 """
 
 import asyncio
-import aiohttp
 import time
 import base64
 import json
@@ -18,9 +17,18 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from huggingface_hub import InferenceClient
 import logging
 from datetime import datetime, timezone
+
+try:
+    import aiohttp
+except ModuleNotFoundError:
+    aiohttp = None
+
+try:
+    from huggingface_hub import InferenceClient
+except ModuleNotFoundError:
+    InferenceClient = None
 
 @dataclass
 class ModelInfo:
@@ -301,6 +309,10 @@ class HuggingFaceModel(BaseModel):
     
     def __init__(self, model_name: str, config: Dict, metadata: Optional[Dict[str, Any]] = None):
         super().__init__(model_name, config, metadata=metadata)
+        if InferenceClient is None:
+            raise RuntimeError(
+                "huggingface_hub is not installed. Install the full requirements or avoid Hugging Face models."
+            )
         hf_config = config.get('huggingface', {})
         self.token = hf_config.get('token')
         
@@ -492,6 +504,8 @@ class OllamaModel(BaseModel):
     
     async def _get_session(self):
         """Get or create aiohttp session."""
+        if aiohttp is None:
+            raise RuntimeError("aiohttp is not installed. Install local requirements for direct HTTP model access.")
         if self.session is None:
             self.session = aiohttp.ClientSession()
         return self.session
@@ -572,14 +586,15 @@ class OllamaModel(BaseModel):
         if self.transport:
             return self.transport
 
-        try:
-            session = await self._get_session()
-            async with session.get(f"{self.base_url}/api/tags", timeout=aiohttp.ClientTimeout(total=3)) as response:
-                if response.status == 200:
-                    self.transport = "http"
-                    return self.transport
-        except Exception:
-            pass
+        if aiohttp is not None:
+            try:
+                session = await self._get_session()
+                async with session.get(f"{self.base_url}/api/tags", timeout=aiohttp.ClientTimeout(total=3)) as response:
+                    if response.status == 200:
+                        self.transport = "http"
+                        return self.transport
+            except Exception:
+                pass
 
         if self.windows_curl:
             try:
@@ -652,6 +667,8 @@ class OllamaModel(BaseModel):
 
     async def _request_generate_http(self, payload: Dict[str, Any], current_timeout: int) -> Dict[str, Any]:
         """Call the Ollama HTTP API through the local Python process."""
+        if aiohttp is None:
+            return {"response": "", "error": "aiohttp_not_installed"}
         session = await self._get_session()
         timeout = aiohttp.ClientTimeout(total=current_timeout)
         async with session.post(f"{self.base_url}/api/generate", json=payload, timeout=timeout) as response:
@@ -767,7 +784,7 @@ class OllamaModel(BaseModel):
                         image_path=image_path,
                     )
 
-                response_text = (result.get("response") or "").strip()
+                response_text = (result.get("response") or result.get("thinking") or "").strip()
                 if result.get("error"):
                     self.logger.warning(f"Ollama generation returned an error for {self.model_name}: {result['error']}")
                 elif not response_text:
@@ -786,11 +803,11 @@ class OllamaModel(BaseModel):
                 else:
                     self.logger.error(f"Ollama generation timeout for model {self.model_name} after {max_retries + 1} attempts with final timeout of {current_timeout}s")
                     return {"response": "", "error": "timeout"}
-            except aiohttp.ClientError as e:
-                self.logger.error(f"Ollama connection error: {str(e)}")
-                self.transport = None
-                return {"response": "", "error": str(e)}
             except Exception as e:
+                if aiohttp is not None and isinstance(e, aiohttp.ClientError):
+                    self.logger.error(f"Ollama connection error: {str(e)}")
+                    self.transport = None
+                    return {"response": "", "error": str(e)}
                 self.logger.error(f"Ollama generation error: {str(e)}")
                 self.transport = None
                 return {"response": "", "error": str(e)}
@@ -818,7 +835,7 @@ class OllamaModel(BaseModel):
         total_duration_sec = self._duration_ns_to_sec(raw.get("total_duration")) or latency_sec
 
         return GenerationResult(
-            text=(raw.get("response") or "").strip(),
+            text=(raw.get("response") or raw.get("thinking") or "").strip(),
             prompt=prompt,
             started_at=started,
             ended_at=ended,
@@ -951,6 +968,8 @@ class LMStudioModel(BaseModel):
     
     async def _get_session(self):
         """Get or create aiohttp session."""
+        if aiohttp is None:
+            raise RuntimeError("aiohttp is not installed. LM Studio support needs local requirements.")
         if self.session is None:
             self.session = aiohttp.ClientSession()
         return self.session
@@ -1251,20 +1270,22 @@ class ModelManager:
                 )
             return parsed
 
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
-                async with session.get(f"{base_url}/api/tags") as response:
-                    if response.status == 200:
-                        models = parse_api_models(await response.json())
-                        self.logger.info(f"Found {len(models)} Ollama models via API")
-                        if models:
-                            return models
-        except asyncio.TimeoutError:
-            self.logger.info("Ollama API timed out during discovery, falling back to CLI")
-        except aiohttp.ClientConnectorError:
-            self.logger.info("Ollama API not reachable during discovery, falling back to CLI")
-        except Exception as e:
-            self.logger.warning(f"Could not discover Ollama models via API: {e}")
+        if aiohttp is not None:
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+                    async with session.get(f"{base_url}/api/tags") as response:
+                        if response.status == 200:
+                            models = parse_api_models(await response.json())
+                            self.logger.info(f"Found {len(models)} Ollama models via API")
+                            if models:
+                                return models
+            except asyncio.TimeoutError:
+                self.logger.info("Ollama API timed out during discovery, falling back to CLI")
+            except Exception as e:
+                if isinstance(e, aiohttp.ClientConnectorError):
+                    self.logger.info("Ollama API not reachable during discovery, falling back to CLI")
+                else:
+                    self.logger.warning(f"Could not discover Ollama models via API: {e}")
 
         if windows_curl:
             try:
@@ -1315,6 +1336,10 @@ class ModelManager:
         base_url = self.config.get('lm_studio', {}).get('base_url', 'http://localhost:1234')
         models = []
         
+        if aiohttp is None:
+            self.logger.info("aiohttp not installed - skipping LM Studio discovery")
+            return models
+
         try:
             # Quick connection test first
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
@@ -1348,10 +1373,11 @@ class ModelManager:
                         
         except asyncio.TimeoutError:
             self.logger.info("LM Studio server not responding (timeout) - skipping LM Studio discovery")
-        except aiohttp.ClientConnectorError:
-            self.logger.info("LM Studio server not running - skipping LM Studio discovery")
         except Exception as e:
-            self.logger.warning(f"Could not discover LM Studio models: {e}")
+            if isinstance(e, aiohttp.ClientConnectorError):
+                self.logger.info("LM Studio server not running - skipping LM Studio discovery")
+            else:
+                self.logger.warning(f"Could not discover LM Studio models: {e}")
         
         return models
     

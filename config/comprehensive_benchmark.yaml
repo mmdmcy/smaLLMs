@@ -26,13 +26,13 @@ lm_studio:
 
 # Benchmark suite preferences
 benchmark_suites:
-  default: "safe_suite"  # Safe for slow laptops
-  comprehensive: "comprehensive_suite"  # Full evaluation
-  quick_test: "quick_test"  # Fast verification
+  default: "core_suite"  # Balanced default
+  comprehensive: "serious_suite"  # Broad local evaluation
+  quick_test: "quick_suite"  # Fast verification
   industry_standard:
-    - "anthropic_suite"
-    - "deepmind_suite" 
-    - "xai_suite"
+    - "frontier_report_suite"
+    - "knowledge_suite"
+    - "commonsense_suite"
 
 # Logging configuration
 logging:
