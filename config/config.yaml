@@ -34,6 +34,7 @@ evaluation_mode:
 local_benchmarks:
   artifacts_dir: "artifacts"
   website_export_dir: "website_exports"
+  website_sync_dir: "../websmaLLMs/public/data"
   default_provider: "ollama"
   default_samples: 10
   default_temperature: 0.0

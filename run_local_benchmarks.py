@@ -64,7 +64,11 @@ def _handle_benchmarks(_: argparse.Namespace) -> None:
 def _handle_export(args: argparse.Namespace) -> None:
     from src.pipeline.exporter import WebsiteExporter
 
-    exporter = WebsiteExporter(artifacts_dir=args.artifacts_dir, output_dir=args.output_dir)
+    exporter = WebsiteExporter(
+        artifacts_dir=args.artifacts_dir,
+        output_dir=args.output_dir,
+        sync_dir=args.sync_dir,
+    )
     exported = exporter.export_run(args.run_id)
     print(json.dumps(exported, indent=2))
 
@@ -95,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--run-id", help="Run id to export. Defaults to the latest run.")
     export_parser.add_argument("--artifacts-dir", default="artifacts", help="Artifact root directory.")
     export_parser.add_argument("--output-dir", default="website_exports", help="Website export directory.")
+    export_parser.add_argument("--sync-dir", help="Optional website public/data directory to mirror the session bundle into.")
     export_parser.set_defaults(handler=_handle_export)
 
     return parser
