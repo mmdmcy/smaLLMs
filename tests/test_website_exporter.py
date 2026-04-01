@@ -185,6 +185,8 @@ class WebsiteExporterTests(unittest.TestCase):
         self.assertEqual(evaluation["evaluation_id"], "gsm8k__qwen3.5_0.8b")
         self.assertEqual(evaluation["sample_count_embedded"], 1)
         self.assertEqual(evaluation["samples"][0]["sample_id"], "gsm8k__qwen3.5_0.8b::0")
+        self.assertEqual(evaluation["samples"][0]["prompt_chars"], len("Question: 20 + 22"))
+        self.assertEqual(evaluation["metrics"]["total_prompt_chars"], len("Question: 20 + 22"))
         self.assertTrue(evaluation["samples"][0]["is_correct"])
 
         synced_session = self.sync_dir / "latest-session.json"

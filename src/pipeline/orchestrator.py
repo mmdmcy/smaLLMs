@@ -257,14 +257,49 @@ class LocalBenchmarkOrchestrator:
                     "sample_count": 0,
                     "correct_count": 0,
                     "accuracy": 0.0,
+                    "success_count": 0,
+                    "success_rate": 0.0,
+                    "responded_count": 0,
+                    "response_rate": 0.0,
                     "error_count": 1,
                     "avg_latency_sec": 0.0,
                     "max_latency_sec": 0.0,
                     "min_latency_sec": 0.0,
+                    "avg_load_duration_sec": 0.0,
+                    "max_load_duration_sec": 0.0,
+                    "min_load_duration_sec": 0.0,
+                    "avg_prompt_eval_duration_sec": 0.0,
+                    "max_prompt_eval_duration_sec": 0.0,
+                    "min_prompt_eval_duration_sec": 0.0,
+                    "avg_eval_duration_sec": 0.0,
+                    "max_eval_duration_sec": 0.0,
+                    "min_eval_duration_sec": 0.0,
+                    "avg_total_duration_sec": 0.0,
+                    "max_total_duration_sec": 0.0,
+                    "min_total_duration_sec": 0.0,
                     "total_prompt_tokens": 0,
                     "total_completion_tokens": 0,
                     "total_tokens": 0,
+                    "avg_prompt_tokens": 0.0,
+                    "max_prompt_tokens": 0.0,
+                    "min_prompt_tokens": 0.0,
+                    "avg_completion_tokens": 0.0,
+                    "max_completion_tokens": 0.0,
+                    "min_completion_tokens": 0.0,
+                    "avg_total_tokens": 0.0,
+                    "max_total_tokens": 0.0,
+                    "min_total_tokens": 0.0,
+                    "total_prompt_chars": 0,
+                    "total_response_chars": 0,
+                    "total_expected_answer_chars": 0,
+                    "total_parsed_prediction_chars": 0,
+                    "avg_prompt_chars": 0.0,
+                    "avg_response_chars": 0.0,
+                    "avg_expected_answer_chars": 0.0,
+                    "avg_parsed_prediction_chars": 0.0,
                     "avg_tokens_per_second": 0.0,
+                    "max_tokens_per_second": 0.0,
+                    "min_tokens_per_second": 0.0,
                     "local_cost_estimate": 0.0,
                 },
             }
@@ -293,8 +328,17 @@ class LocalBenchmarkOrchestrator:
         total_samples = 0
         total_correct = 0
         total_errors = 0
+        total_success = 0
+        total_responded = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
         total_tokens = 0
         total_duration = 0.0
+        total_load_duration = 0.0
+        total_prompt_eval_duration = 0.0
+        total_eval_duration = 0.0
+        total_prompt_chars = 0
+        total_response_chars = 0
 
         for result in completed:
             metrics = result.get("metrics", {})
@@ -302,8 +346,19 @@ class LocalBenchmarkOrchestrator:
             total_samples += int(metrics.get("sample_count", 0))
             total_correct += int(metrics.get("correct_count", 0))
             total_errors += int(metrics.get("error_count", 0))
+            total_success += int(metrics.get("success_count", 0))
+            total_responded += int(metrics.get("responded_count", 0))
+            total_prompt_tokens += int(metrics.get("total_prompt_tokens", 0))
+            total_completion_tokens += int(metrics.get("total_completion_tokens", 0))
             total_tokens += int(metrics.get("total_tokens", 0))
             total_duration += float(metrics.get("avg_latency_sec", 0.0)) * int(metrics.get("sample_count", 0))
+            total_load_duration += float(metrics.get("avg_load_duration_sec", 0.0)) * int(metrics.get("sample_count", 0))
+            total_prompt_eval_duration += float(metrics.get("avg_prompt_eval_duration_sec", 0.0)) * int(
+                metrics.get("sample_count", 0)
+            )
+            total_eval_duration += float(metrics.get("avg_eval_duration_sec", 0.0)) * int(metrics.get("sample_count", 0))
+            total_prompt_chars += int(metrics.get("total_prompt_chars", 0))
+            total_response_chars += int(metrics.get("total_response_chars", 0))
 
             if model_name not in leaderboard:
                 leaderboard[model_name] = {
@@ -311,28 +366,82 @@ class LocalBenchmarkOrchestrator:
                     "provider": result["model"]["provider"],
                     "size_gb": result["model"].get("size_gb", 0.0),
                     "parameters": result["model"].get("parameters", "unknown"),
+                    "architecture": result["model"].get("architecture", "unknown"),
+                    "license": result["model"].get("license", "unknown"),
+                    "max_context": result["model"].get("max_context", 0),
+                    "supports_vision": result["model"].get("supports_vision", False),
+                    "model_type": result["model"].get("model_type", "text"),
                     "family": result["model"].get("family", "unknown"),
                     "quantization": result["model"].get("quantization", "unknown"),
                     "benchmarks": {},
                     "total_samples": 0,
                     "correct_count": 0,
                     "error_count": 0,
+                    "success_count": 0,
+                    "responded_count": 0,
+                    "total_prompt_tokens": 0,
+                    "total_completion_tokens": 0,
                     "total_tokens": 0,
                     "total_duration_sec": 0.0,
+                    "total_load_duration_sec": 0.0,
+                    "total_prompt_eval_duration_sec": 0.0,
+                    "total_eval_duration_sec": 0.0,
+                    "total_prompt_chars": 0,
+                    "total_response_chars": 0,
+                    "total_expected_answer_chars": 0,
+                    "total_parsed_prediction_chars": 0,
+                    "tokens_per_second_weighted_sum": 0.0,
                 }
 
             entry = leaderboard[model_name]
             entry["benchmarks"][result["benchmark_name"]] = {
                 "accuracy": metrics.get("accuracy", 0.0),
                 "sample_count": metrics.get("sample_count", 0),
+                "correct_count": metrics.get("correct_count", 0),
+                "success_count": metrics.get("success_count", 0),
+                "responded_count": metrics.get("responded_count", 0),
                 "avg_latency_sec": metrics.get("avg_latency_sec", 0.0),
+                "max_latency_sec": metrics.get("max_latency_sec", 0.0),
+                "min_latency_sec": metrics.get("min_latency_sec", 0.0),
+                "avg_load_duration_sec": metrics.get("avg_load_duration_sec", 0.0),
+                "avg_prompt_eval_duration_sec": metrics.get("avg_prompt_eval_duration_sec", 0.0),
+                "avg_eval_duration_sec": metrics.get("avg_eval_duration_sec", 0.0),
+                "avg_total_duration_sec": metrics.get("avg_total_duration_sec", 0.0),
+                "total_prompt_tokens": metrics.get("total_prompt_tokens", 0),
+                "total_completion_tokens": metrics.get("total_completion_tokens", 0),
+                "total_tokens": metrics.get("total_tokens", 0),
+                "avg_prompt_tokens": metrics.get("avg_prompt_tokens", 0.0),
+                "avg_completion_tokens": metrics.get("avg_completion_tokens", 0.0),
+                "avg_total_tokens": metrics.get("avg_total_tokens", 0.0),
+                "success_rate": metrics.get("success_rate", 0.0),
+                "response_rate": metrics.get("response_rate", 0.0),
                 "avg_tokens_per_second": metrics.get("avg_tokens_per_second", 0.0),
+                "max_tokens_per_second": metrics.get("max_tokens_per_second", 0.0),
+                "min_tokens_per_second": metrics.get("min_tokens_per_second", 0.0),
+                "total_prompt_chars": metrics.get("total_prompt_chars", 0),
+                "total_response_chars": metrics.get("total_response_chars", 0),
+                "avg_prompt_chars": metrics.get("avg_prompt_chars", 0.0),
+                "avg_response_chars": metrics.get("avg_response_chars", 0.0),
             }
             entry["total_samples"] += int(metrics.get("sample_count", 0))
             entry["correct_count"] += int(metrics.get("correct_count", 0))
             entry["error_count"] += int(metrics.get("error_count", 0))
+            entry["success_count"] += int(metrics.get("success_count", 0))
+            entry["responded_count"] += int(metrics.get("responded_count", 0))
+            entry["total_prompt_tokens"] += int(metrics.get("total_prompt_tokens", 0))
+            entry["total_completion_tokens"] += int(metrics.get("total_completion_tokens", 0))
             entry["total_tokens"] += int(metrics.get("total_tokens", 0))
             entry["total_duration_sec"] += float(metrics.get("avg_latency_sec", 0.0)) * int(metrics.get("sample_count", 0))
+            entry["total_load_duration_sec"] += float(metrics.get("avg_load_duration_sec", 0.0)) * int(metrics.get("sample_count", 0))
+            entry["total_prompt_eval_duration_sec"] += float(metrics.get("avg_prompt_eval_duration_sec", 0.0)) * int(metrics.get("sample_count", 0))
+            entry["total_eval_duration_sec"] += float(metrics.get("avg_eval_duration_sec", 0.0)) * int(metrics.get("sample_count", 0))
+            entry["total_prompt_chars"] += int(metrics.get("total_prompt_chars", 0))
+            entry["total_response_chars"] += int(metrics.get("total_response_chars", 0))
+            entry["total_expected_answer_chars"] += int(metrics.get("total_expected_answer_chars", 0))
+            entry["total_parsed_prediction_chars"] += int(metrics.get("total_parsed_prediction_chars", 0))
+            entry["tokens_per_second_weighted_sum"] += float(metrics.get("avg_tokens_per_second", 0.0)) * int(
+                metrics.get("sample_count", 0)
+            )
 
         leaderboard_rows: List[Dict[str, Any]] = []
         for entry in leaderboard.values():
@@ -344,15 +453,46 @@ class LocalBenchmarkOrchestrator:
                 "provider": entry["provider"],
                 "size_gb": entry["size_gb"],
                 "parameters": entry["parameters"],
+                "architecture": entry["architecture"],
+                "license": entry["license"],
+                "max_context": entry["max_context"],
+                "supports_vision": entry["supports_vision"],
+                "model_type": entry["model_type"],
                 "family": entry["family"],
                 "quantization": entry["quantization"],
                 "overall_accuracy": round(overall_accuracy, 4),
+                "success_rate": round(entry["success_count"] / total_samples_for_model, 4) if total_samples_for_model else 0.0,
+                "response_rate": round(entry["responded_count"] / total_samples_for_model, 4) if total_samples_for_model else 0.0,
                 "benchmarks_run": len(entry["benchmarks"]),
                 "total_samples": total_samples_for_model,
                 "correct_count": entry["correct_count"],
                 "error_count": entry["error_count"],
+                "success_count": entry["success_count"],
+                "responded_count": entry["responded_count"],
                 "avg_latency_sec": round(avg_latency_sec, 4),
+                "avg_load_duration_sec": round(entry["total_load_duration_sec"] / total_samples_for_model, 4)
+                if total_samples_for_model
+                else 0.0,
+                "avg_prompt_eval_duration_sec": round(
+                    entry["total_prompt_eval_duration_sec"] / total_samples_for_model, 4
+                )
+                if total_samples_for_model
+                else 0.0,
+                "avg_eval_duration_sec": round(entry["total_eval_duration_sec"] / total_samples_for_model, 4)
+                if total_samples_for_model
+                else 0.0,
+                "total_prompt_tokens": entry["total_prompt_tokens"],
+                "total_completion_tokens": entry["total_completion_tokens"],
                 "total_tokens": entry["total_tokens"],
+                "avg_tokens_per_second": round(
+                    entry["tokens_per_second_weighted_sum"] / total_samples_for_model, 4
+                )
+                if total_samples_for_model
+                else 0.0,
+                "total_prompt_chars": entry["total_prompt_chars"],
+                "total_response_chars": entry["total_response_chars"],
+                "total_expected_answer_chars": entry["total_expected_answer_chars"],
+                "total_parsed_prediction_chars": entry["total_parsed_prediction_chars"],
                 "benchmarks": entry["benchmarks"],
             }
             leaderboard_rows.append(row)
@@ -375,9 +515,23 @@ class LocalBenchmarkOrchestrator:
                 "samples": total_samples,
                 "correct": total_correct,
                 "accuracy": round(total_correct / total_samples, 4) if total_samples else 0.0,
+                "success": total_success,
+                "success_rate": round(total_success / total_samples, 4) if total_samples else 0.0,
+                "responded": total_responded,
+                "response_rate": round(total_responded / total_samples, 4) if total_samples else 0.0,
                 "errors": total_errors,
+                "total_prompt_tokens": total_prompt_tokens,
+                "total_completion_tokens": total_completion_tokens,
                 "total_tokens": total_tokens,
+                "avg_latency_sec": round(total_duration / total_samples, 4) if total_samples else 0.0,
                 "total_duration_sec": round(total_duration, 4),
+                "avg_load_duration_sec": round(total_load_duration / total_samples, 4) if total_samples else 0.0,
+                "avg_prompt_eval_duration_sec": round(total_prompt_eval_duration / total_samples, 4)
+                if total_samples
+                else 0.0,
+                "avg_eval_duration_sec": round(total_eval_duration / total_samples, 4) if total_samples else 0.0,
+                "total_prompt_chars": total_prompt_chars,
+                "total_response_chars": total_response_chars,
             },
             "leaderboard": leaderboard_rows,
             "evaluations": benchmark_results,

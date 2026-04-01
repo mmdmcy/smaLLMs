@@ -938,7 +938,7 @@ class OllamaModel(BaseModel):
             architecture="transformer",
             license="unknown",
             cost_per_token=0.0,  # Local execution is free
-            max_context=2048,
+            max_context=int(self.metadata.get("context_length") or self.metadata.get("max_context") or 2048),
             supports_vision=self.supports_vision,
             model_type="vision" if self.supports_vision else "text",
             family=self.metadata.get("family", "unknown"),
@@ -1192,7 +1192,7 @@ class LMStudioModel(BaseModel):
             architecture="transformer",
             license="unknown",
             cost_per_token=0.0,  # Local execution is free
-            max_context=4096,  # LM Studio typically has higher context
+            max_context=int(self.metadata.get("context_length") or self.metadata.get("max_context") or 4096),
             supports_vision=self.supports_vision,
             model_type="vision" if self.supports_vision else "text",
             family=self.metadata.get("family", "unknown"),

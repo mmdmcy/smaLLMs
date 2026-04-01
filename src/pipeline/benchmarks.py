@@ -363,28 +363,85 @@ def summarize_samples(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
     sample_count = len(samples)
     correct_count = sum(1 for sample in samples if sample.get("is_correct"))
     total_errors = sum(1 for sample in samples if sample.get("error"))
+    successful_count = sum(1 for sample in samples if not sample.get("error"))
+    responded_count = sum(1 for sample in samples if str(sample.get("response_text") or "").strip())
     total_prompt_tokens = sum(int(sample.get("prompt_tokens") or 0) for sample in samples)
     total_completion_tokens = sum(int(sample.get("completion_tokens") or 0) for sample in samples)
     total_tokens = sum(int(sample.get("total_tokens") or 0) for sample in samples)
     latencies = [float(sample.get("latency_sec") or 0.0) for sample in samples]
+    load_durations = [float(sample.get("load_duration_sec") or 0.0) for sample in samples]
+    prompt_eval_durations = [float(sample.get("prompt_eval_duration_sec") or 0.0) for sample in samples]
+    eval_durations = [float(sample.get("eval_duration_sec") or 0.0) for sample in samples]
+    total_durations = [float(sample.get("total_duration_sec") or 0.0) for sample in samples]
+    prompt_tokens = [int(sample.get("prompt_tokens") or 0) for sample in samples]
+    completion_tokens = [int(sample.get("completion_tokens") or 0) for sample in samples]
+    token_totals = [int(sample.get("total_tokens") or 0) for sample in samples]
+    prompt_chars = [int(sample.get("prompt_chars") or 0) for sample in samples]
+    response_chars = [int(sample.get("response_chars") or 0) for sample in samples]
+    expected_answer_chars = [int(sample.get("expected_answer_chars") or 0) for sample in samples]
+    parsed_prediction_chars = [int(sample.get("parsed_prediction_chars") or 0) for sample in samples]
     tps = [
         float(sample.get("tokens_per_second") or 0.0)
         for sample in samples
         if float(sample.get("tokens_per_second") or 0.0) > 0
     ]
 
+    def avg(values: List[float] | List[int]) -> float:
+        return round(sum(values) / sample_count, 4) if sample_count else 0.0
+
+    def min_value(values: List[float] | List[int]) -> float:
+        return round(float(min(values)), 4) if values else 0.0
+
+    def max_value(values: List[float] | List[int]) -> float:
+        return round(float(max(values)), 4) if values else 0.0
+
     return {
         "sample_count": sample_count,
         "correct_count": correct_count,
         "accuracy": round(correct_count / sample_count, 4) if sample_count else 0.0,
+        "success_count": successful_count,
+        "success_rate": round(successful_count / sample_count, 4) if sample_count else 0.0,
+        "responded_count": responded_count,
+        "response_rate": round(responded_count / sample_count, 4) if sample_count else 0.0,
         "error_count": total_errors,
-        "avg_latency_sec": round(sum(latencies) / sample_count, 4) if sample_count else 0.0,
-        "max_latency_sec": round(max(latencies), 4) if latencies else 0.0,
-        "min_latency_sec": round(min(latencies), 4) if latencies else 0.0,
+        "avg_latency_sec": avg(latencies),
+        "max_latency_sec": max_value(latencies),
+        "min_latency_sec": min_value(latencies),
+        "avg_load_duration_sec": avg(load_durations),
+        "max_load_duration_sec": max_value(load_durations),
+        "min_load_duration_sec": min_value(load_durations),
+        "avg_prompt_eval_duration_sec": avg(prompt_eval_durations),
+        "max_prompt_eval_duration_sec": max_value(prompt_eval_durations),
+        "min_prompt_eval_duration_sec": min_value(prompt_eval_durations),
+        "avg_eval_duration_sec": avg(eval_durations),
+        "max_eval_duration_sec": max_value(eval_durations),
+        "min_eval_duration_sec": min_value(eval_durations),
+        "avg_total_duration_sec": avg(total_durations),
+        "max_total_duration_sec": max_value(total_durations),
+        "min_total_duration_sec": min_value(total_durations),
         "total_prompt_tokens": total_prompt_tokens,
         "total_completion_tokens": total_completion_tokens,
         "total_tokens": total_tokens,
+        "avg_prompt_tokens": avg(prompt_tokens),
+        "max_prompt_tokens": max_value(prompt_tokens),
+        "min_prompt_tokens": min_value(prompt_tokens),
+        "avg_completion_tokens": avg(completion_tokens),
+        "max_completion_tokens": max_value(completion_tokens),
+        "min_completion_tokens": min_value(completion_tokens),
+        "avg_total_tokens": avg(token_totals),
+        "max_total_tokens": max_value(token_totals),
+        "min_total_tokens": min_value(token_totals),
+        "total_prompt_chars": sum(prompt_chars),
+        "total_response_chars": sum(response_chars),
+        "total_expected_answer_chars": sum(expected_answer_chars),
+        "total_parsed_prediction_chars": sum(parsed_prediction_chars),
+        "avg_prompt_chars": avg(prompt_chars),
+        "avg_response_chars": avg(response_chars),
+        "avg_expected_answer_chars": avg(expected_answer_chars),
+        "avg_parsed_prediction_chars": avg(parsed_prediction_chars),
         "avg_tokens_per_second": round(sum(tps) / len(tps), 4) if tps else 0.0,
+        "max_tokens_per_second": max_value(tps),
+        "min_tokens_per_second": min_value(tps),
         "local_cost_estimate": 0.0,
     }
 
@@ -490,6 +547,10 @@ class DatasetBenchmark(ABC):
                 "response_text": generation.text,
                 "expected_answer": expected,
                 "parsed_prediction": predicted,
+                "prompt_chars": len(prompt),
+                "response_chars": len(generation.text),
+                "expected_answer_chars": len(expected),
+                "parsed_prediction_chars": len(predicted),
                 "is_correct": correct,
                 "error": error,
                 "started_at": generation.started_at,

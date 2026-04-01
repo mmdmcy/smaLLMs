@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.pipeline.artifacts import ArtifactStore, safe_slug, utcnow_iso
+from src.pipeline.benchmarks import summarize_samples
 
 
 class WebsiteExporter:
@@ -37,8 +38,9 @@ class WebsiteExporter:
         run_dir.mkdir(parents=True, exist_ok=True)
 
         summary = run_data.get("summary", {})
-        leaderboard = summary.get("leaderboard", [])
         evaluations = self._build_evaluations_bundle(summary.get("evaluations", []))
+        leaderboard = self._enrich_leaderboard(summary.get("leaderboard", []), evaluations)
+        session_summary = self._make_session_summary(summary, evaluations)
         evaluation_briefs = [self._make_evaluation_brief(evaluation) for evaluation in evaluations]
         models_bundle = self._build_models_bundle(leaderboard, evaluation_briefs)
         benchmarks_bundle = self._build_benchmarks_bundle(evaluation_briefs)
@@ -57,7 +59,7 @@ class WebsiteExporter:
                 "run_dir": run_data["run_dir"],
                 "manifest": run_data["manifest"],
             },
-            "summary": self._make_session_summary(summary),
+            "summary": session_summary,
             "catalog": catalog_bundle,
             "leaderboard": leaderboard,
             "models": models_bundle,
@@ -90,15 +92,15 @@ class WebsiteExporter:
         exported_files["leaderboard.csv"] = str(csv_path)
 
         html_path = latest_dir / "index.html"
-        self._write_html_preview(html_path, summary, leaderboard)
-        self._write_html_preview(run_dir / "index.html", summary, leaderboard)
+        self._write_html_preview(html_path, session_summary, leaderboard)
+        self._write_html_preview(run_dir / "index.html", session_summary, leaderboard)
         exported_files["index.html"] = str(html_path)
 
         latest_pointer = self.output_dir / "latest_run.txt"
         latest_pointer.write_text(run_id + "\n", encoding="utf-8")
 
         if self.sync_dir is not None:
-            exported_files.update(self._sync_session_bundle(run_id, session_payload, summary))
+            exported_files.update(self._sync_session_bundle(run_id, session_payload, session_summary))
 
         return exported_files
 
@@ -128,6 +130,8 @@ class WebsiteExporter:
             bundled_evaluation["evaluation_id"] = evaluation_id
             bundled_evaluation["samples"] = samples
             bundled_evaluation["sample_count_embedded"] = len(samples)
+            if samples:
+                bundled_evaluation["metrics"] = summarize_samples(samples)
             bundled.append(bundled_evaluation)
 
         return bundled
@@ -147,6 +151,14 @@ class WebsiteExporter:
 
                 sample = json.loads(stripped)
                 sample_index = sample.get("sample_index", line_number)
+                sample["prompt_chars"] = int(sample.get("prompt_chars") or len(str(sample.get("prompt") or "")))
+                sample["response_chars"] = int(sample.get("response_chars") or len(str(sample.get("response_text") or "")))
+                sample["expected_answer_chars"] = int(
+                    sample.get("expected_answer_chars") or len(str(sample.get("expected_answer") or ""))
+                )
+                sample["parsed_prediction_chars"] = int(
+                    sample.get("parsed_prediction_chars") or len(str(sample.get("parsed_prediction") or ""))
+                )
                 sample["evaluation_id"] = evaluation_id
                 sample["sample_id"] = f"{evaluation_id}::{sample_index}"
                 samples.append(sample)
@@ -259,13 +271,180 @@ class WebsiteExporter:
             "benchmark_suites": manifest.get("benchmark_suites", []),
         }
 
-    def _make_session_summary(self, summary: Dict[str, Any]) -> Dict[str, Any]:
+    def _enrich_leaderboard(
+        self,
+        leaderboard: List[Dict[str, Any]],
+        evaluations: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Rebuild leaderboard rows from evaluation metrics so legacy runs stay rich."""
+        existing_by_model = {row.get("model_name"): dict(row) for row in leaderboard}
+        rebuilt: Dict[str, Dict[str, Any]] = {}
+
+        for evaluation in evaluations:
+            model = evaluation.get("model", {})
+            metrics = evaluation.get("metrics", {})
+            model_name = str(model.get("name", "unknown"))
+            sample_count = int(metrics.get("sample_count", 0))
+            entry = rebuilt.setdefault(
+                model_name,
+                {
+                    **existing_by_model.get(model_name, {}),
+                    "model_name": model_name,
+                    "provider": model.get("provider", existing_by_model.get(model_name, {}).get("provider", "unknown")),
+                    "size_gb": model.get("size_gb", existing_by_model.get(model_name, {}).get("size_gb", 0.0)),
+                    "parameters": model.get("parameters", existing_by_model.get(model_name, {}).get("parameters", "unknown")),
+                    "architecture": model.get("architecture", existing_by_model.get(model_name, {}).get("architecture", "unknown")),
+                    "license": model.get("license", existing_by_model.get(model_name, {}).get("license", "unknown")),
+                    "max_context": model.get("max_context", existing_by_model.get(model_name, {}).get("max_context", 0)),
+                    "supports_vision": model.get(
+                        "supports_vision", existing_by_model.get(model_name, {}).get("supports_vision", False)
+                    ),
+                    "model_type": model.get("model_type", existing_by_model.get(model_name, {}).get("model_type", "text")),
+                    "family": model.get("family", existing_by_model.get(model_name, {}).get("family", "unknown")),
+                    "quantization": model.get(
+                        "quantization", existing_by_model.get(model_name, {}).get("quantization", "unknown")
+                    ),
+                    "benchmarks": {},
+                    "benchmarks_run": 0,
+                    "total_samples": 0,
+                    "correct_count": 0,
+                    "success_count": 0,
+                    "responded_count": 0,
+                    "error_count": 0,
+                    "total_prompt_tokens": 0,
+                    "total_completion_tokens": 0,
+                    "total_tokens": 0,
+                    "total_prompt_chars": 0,
+                    "total_response_chars": 0,
+                    "total_expected_answer_chars": 0,
+                    "total_parsed_prediction_chars": 0,
+                    "_latency_weighted_sum": 0.0,
+                    "_load_weighted_sum": 0.0,
+                    "_prompt_eval_weighted_sum": 0.0,
+                    "_eval_weighted_sum": 0.0,
+                    "_tps_weighted_sum": 0.0,
+                },
+            )
+
+            entry["benchmarks"][str(evaluation.get("benchmark_name", "unknown"))] = dict(metrics)
+            entry["benchmarks_run"] = len(entry["benchmarks"])
+            entry["total_samples"] += sample_count
+            entry["correct_count"] += int(metrics.get("correct_count", 0))
+            entry["success_count"] += int(metrics.get("success_count", 0))
+            entry["responded_count"] += int(metrics.get("responded_count", 0))
+            entry["error_count"] += int(metrics.get("error_count", 0))
+            entry["total_prompt_tokens"] += int(metrics.get("total_prompt_tokens", 0))
+            entry["total_completion_tokens"] += int(metrics.get("total_completion_tokens", 0))
+            entry["total_tokens"] += int(metrics.get("total_tokens", 0))
+            entry["total_prompt_chars"] += int(metrics.get("total_prompt_chars", 0))
+            entry["total_response_chars"] += int(metrics.get("total_response_chars", 0))
+            entry["total_expected_answer_chars"] += int(metrics.get("total_expected_answer_chars", 0))
+            entry["total_parsed_prediction_chars"] += int(metrics.get("total_parsed_prediction_chars", 0))
+            entry["_latency_weighted_sum"] += float(metrics.get("avg_latency_sec", 0.0)) * sample_count
+            entry["_load_weighted_sum"] += float(metrics.get("avg_load_duration_sec", 0.0)) * sample_count
+            entry["_prompt_eval_weighted_sum"] += float(metrics.get("avg_prompt_eval_duration_sec", 0.0)) * sample_count
+            entry["_eval_weighted_sum"] += float(metrics.get("avg_eval_duration_sec", 0.0)) * sample_count
+            entry["_tps_weighted_sum"] += float(metrics.get("avg_tokens_per_second", 0.0)) * sample_count
+
+        rows: List[Dict[str, Any]] = []
+        for entry in rebuilt.values():
+            sample_count = int(entry.get("total_samples", 0))
+            row = dict(entry)
+            row["overall_accuracy"] = round(row["correct_count"] / sample_count, 4) if sample_count else 0.0
+            row["success_rate"] = round(row["success_count"] / sample_count, 4) if sample_count else 0.0
+            row["response_rate"] = round(row["responded_count"] / sample_count, 4) if sample_count else 0.0
+            row["avg_latency_sec"] = round(row.pop("_latency_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+            row["avg_load_duration_sec"] = (
+                round(row.pop("_load_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+            )
+            row["avg_prompt_eval_duration_sec"] = (
+                round(row.pop("_prompt_eval_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+            )
+            row["avg_eval_duration_sec"] = (
+                round(row.pop("_eval_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+            )
+            row["avg_tokens_per_second"] = (
+                round(row.pop("_tps_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+            )
+            rows.append(row)
+
+        rows.sort(key=lambda item: (float(item.get("overall_accuracy", 0.0)), -float(item.get("avg_latency_sec", 0.0))), reverse=True)
+        for index, row in enumerate(rows, start=1):
+            row["rank"] = index
+        return rows
+
+    def _make_session_summary(self, summary: Dict[str, Any], evaluations: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Trim the full summary down for the website session bundle."""
+        totals = dict(summary.get("totals", {}))
+        if evaluations:
+            sample_count = sum(int(item.get("metrics", {}).get("sample_count", 0)) for item in evaluations)
+            correct_count = sum(int(item.get("metrics", {}).get("correct_count", 0)) for item in evaluations)
+            success_count = sum(int(item.get("metrics", {}).get("success_count", 0)) for item in evaluations)
+            responded_count = sum(int(item.get("metrics", {}).get("responded_count", 0)) for item in evaluations)
+            error_count = sum(int(item.get("metrics", {}).get("error_count", 0)) for item in evaluations)
+            total_prompt_tokens = sum(int(item.get("metrics", {}).get("total_prompt_tokens", 0)) for item in evaluations)
+            total_completion_tokens = sum(
+                int(item.get("metrics", {}).get("total_completion_tokens", 0)) for item in evaluations
+            )
+            total_tokens = sum(int(item.get("metrics", {}).get("total_tokens", 0)) for item in evaluations)
+            total_prompt_chars = sum(int(item.get("metrics", {}).get("total_prompt_chars", 0)) for item in evaluations)
+            total_response_chars = sum(int(item.get("metrics", {}).get("total_response_chars", 0)) for item in evaluations)
+            latency_weighted_sum = sum(
+                float(item.get("metrics", {}).get("avg_latency_sec", 0.0))
+                * int(item.get("metrics", {}).get("sample_count", 0))
+                for item in evaluations
+            )
+            load_weighted_sum = sum(
+                float(item.get("metrics", {}).get("avg_load_duration_sec", 0.0))
+                * int(item.get("metrics", {}).get("sample_count", 0))
+                for item in evaluations
+            )
+            prompt_eval_weighted_sum = sum(
+                float(item.get("metrics", {}).get("avg_prompt_eval_duration_sec", 0.0))
+                * int(item.get("metrics", {}).get("sample_count", 0))
+                for item in evaluations
+            )
+            eval_weighted_sum = sum(
+                float(item.get("metrics", {}).get("avg_eval_duration_sec", 0.0))
+                * int(item.get("metrics", {}).get("sample_count", 0))
+                for item in evaluations
+            )
+
+            totals.update(
+                {
+                    "models": len({item.get("model", {}).get("name") for item in evaluations}),
+                    "benchmarks": len({item.get("benchmark_name") for item in evaluations}),
+                    "evaluations": len(evaluations),
+                    "completed_evaluations": len([item for item in evaluations if item.get("status") == "completed"]),
+                    "failed_evaluations": len([item for item in evaluations if item.get("status") != "completed"]),
+                    "samples": sample_count,
+                    "correct": correct_count,
+                    "accuracy": round(correct_count / sample_count, 4) if sample_count else 0.0,
+                    "success": success_count,
+                    "success_rate": round(success_count / sample_count, 4) if sample_count else 0.0,
+                    "responded": responded_count,
+                    "response_rate": round(responded_count / sample_count, 4) if sample_count else 0.0,
+                    "errors": error_count,
+                    "total_prompt_tokens": total_prompt_tokens,
+                    "total_completion_tokens": total_completion_tokens,
+                    "total_tokens": total_tokens,
+                    "avg_latency_sec": round(latency_weighted_sum / sample_count, 4) if sample_count else 0.0,
+                    "total_duration_sec": round(latency_weighted_sum, 4),
+                    "avg_load_duration_sec": round(load_weighted_sum / sample_count, 4) if sample_count else 0.0,
+                    "avg_prompt_eval_duration_sec": round(prompt_eval_weighted_sum / sample_count, 4)
+                    if sample_count
+                    else 0.0,
+                    "avg_eval_duration_sec": round(eval_weighted_sum / sample_count, 4) if sample_count else 0.0,
+                    "total_prompt_chars": total_prompt_chars,
+                    "total_response_chars": total_response_chars,
+                }
+            )
+
         return {
             "run_id": summary.get("run_id"),
             "generated_at": summary.get("generated_at"),
             "manifest_path": summary.get("manifest_path"),
-            "totals": summary.get("totals", {}),
+            "totals": totals,
         }
 
     def _sync_session_bundle(
@@ -325,14 +504,27 @@ class WebsiteExporter:
             "provider",
             "size_gb",
             "parameters",
+            "architecture",
+            "license",
+            "max_context",
+            "supports_vision",
+            "model_type",
             "family",
             "quantization",
             "overall_accuracy",
+            "success_rate",
+            "response_rate",
             "benchmarks_run",
             "total_samples",
             "correct_count",
             "error_count",
             "avg_latency_sec",
+            "avg_load_duration_sec",
+            "avg_prompt_eval_duration_sec",
+            "avg_eval_duration_sec",
+            "avg_tokens_per_second",
+            "total_prompt_tokens",
+            "total_completion_tokens",
             "total_tokens",
         ] + [f"{name}_accuracy" for name in benchmark_names]
 
