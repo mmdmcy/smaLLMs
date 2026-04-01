@@ -44,6 +44,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "local_benchmarks": {
         "artifacts_dir": "artifacts",
         "website_export_dir": "website_exports",
+        "website_sync_dir": "../websmaLLMs/public/data",
         "default_provider": "ollama",
         "default_samples": 25,
         "default_temperature": 0.0,
@@ -204,6 +205,7 @@ class LocalBenchmarkOrchestrator:
             exporter = WebsiteExporter(
                 artifacts_dir=self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts"),
                 output_dir=self.config.get("local_benchmarks", {}).get("website_export_dir", "website_exports"),
+                sync_dir=self.config.get("local_benchmarks", {}).get("website_sync_dir"),
             )
             exporter.export_run(paths.run_id)
 

@@ -177,7 +177,36 @@ Useful files:
 - `summary.json`
 - `leaderboard.json`
 - `leaderboard.csv`
+- `session.json` for the website
 - per-model/per-benchmark sample JSONL artifacts
+
+## Website workflow
+
+The exporter now writes a single self-contained website bundle:
+
+- `website_exports/latest/session.json`
+
+That file includes:
+
+- run metadata
+- leaderboard rows
+- per-benchmark evaluation summaries
+- embedded sample records with prompts, responses, parsed answers, token counts, latency, and raw provider metadata
+
+When the sibling repo exists at `../websmaLLMs`, the exporter also mirrors the latest session into:
+
+- `../websmaLLMs/public/data/latest-session.json`
+
+That means the website can either:
+
+- auto-load the mirrored session on startup
+- import any exported `session.json` manually through the UI
+
+If you want to override the mirror location, use:
+
+```bash
+python3 run_local_benchmarks.py export --sync-dir /path/to/websmaLLMs/public/data
+```
 
 ## Benchmark suites
 

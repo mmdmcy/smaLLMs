@@ -256,6 +256,7 @@ class SmaLLMsCLI:
         self.exporter = WebsiteExporter(
             artifacts_dir=self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts"),
             output_dir=self.config.get("local_benchmarks", {}).get("website_export_dir", "website_exports"),
+            sync_dir=self.config.get("local_benchmarks", {}).get("website_sync_dir"),
         )
 
         Path(self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts")).mkdir(parents=True, exist_ok=True)
@@ -269,6 +270,7 @@ class SmaLLMsCLI:
                 "local_benchmarks": {
                     "artifacts_dir": "artifacts",
                     "website_export_dir": "website_exports",
+                    "website_sync_dir": "../websmaLLMs/public/data",
                     "default_samples": 10,
                     "default_benchmarks": list(DEFAULT_BENCHMARKS),
                     "export_after_run": True,
@@ -424,9 +426,19 @@ class SmaLLMsCLI:
                     f"lat {row.get('avg_latency_sec', 0.0):.2f}s"
                 )
 
-    def export_results(self, run_id: Optional[str] = None) -> None:
+    def export_results(self, run_id: Optional[str] = None, sync_dir: Optional[str] = None) -> None:
         """Export website-friendly files from artifacts."""
-        exported = self.exporter.export_run(run_id)
+        if sync_dir:
+            from src.pipeline.exporter import WebsiteExporter
+
+            exporter = WebsiteExporter(
+                artifacts_dir=self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts"),
+                output_dir=self.config.get("local_benchmarks", {}).get("website_export_dir", "website_exports"),
+                sync_dir=sync_dir,
+            )
+            exported = exporter.export_run(run_id)
+        else:
+            exported = self.exporter.export_run(run_id)
         print(f"\n{self.terminal.BOLD}Exported Website Bundle{self.terminal.RESET}")
         for name, path in exported.items():
             print(f"  {name}: {path}")
@@ -541,8 +553,11 @@ class SmaLLMsCLI:
         print(f"  Samples: {totals.get('samples', 0)}")
         print(f"  Artifacts: {result['run_dir']}")
         website_dir = self.config.get("local_benchmarks", {}).get("website_export_dir", "website_exports")
+        sync_dir = self.config.get("local_benchmarks", {}).get("website_sync_dir")
         if export_after_run is not False:
             print(f"  Website export: {website_dir}/latest")
+            if sync_dir:
+                print(f"  Website sync: {sync_dir}/latest-session.json")
         return result
 
     async def run_interactive_benchmark(self) -> None:
@@ -637,6 +652,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-export", action="store_true", help="Skip website export after a run.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON for discover/benchmarks/status.")
     parser.add_argument("--run-id", help="Run id for export; defaults to the latest run.")
+    parser.add_argument("--sync-dir", help="Optional website public/data directory to mirror the exported session bundle into.")
     return parser
 
 
@@ -672,7 +688,7 @@ def main() -> None:
         elif command == "status":
             app.show_status(json_output=args.json)
         elif command == "export":
-            app.export_results(run_id=args.run_id)
+            app.export_results(run_id=args.run_id, sync_dir=args.sync_dir)
     except ModuleNotFoundError as exc:
         raise SystemExit(f"Missing dependency '{exc.name}'. Install the requirements before running this command.")
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
