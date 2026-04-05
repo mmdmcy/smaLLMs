@@ -25,6 +25,7 @@ from src.pipeline.benchmarks import (
     list_benchmark_suites,
     list_supported_benchmarks,
 )
+from src.cli.setup_checks import build_setup_report_lines, collect_setup_report
 
 
 def _parse_list(value: Optional[List[str]]) -> Optional[List[str]]:
@@ -298,6 +299,7 @@ class SmaLLMsCLI:
 ╚══════════════════════════════════════════════════════════════════════════════╝{self.terminal.RESET}
 
 {self.terminal.BOLD}Commands:{self.terminal.RESET}
+  {self.terminal.GREEN}doctor{self.terminal.RESET}     - Check Ollama / LM Studio status and next steps
   {self.terminal.GREEN}discover{self.terminal.RESET}   - Find local models across supported providers
   {self.terminal.GREEN}benchmarks{self.terminal.RESET} - Show runnable benchmarks and tracked frontier evals
   {self.terminal.GREEN}run{self.terminal.RESET}        - Start a benchmark run
@@ -308,6 +310,7 @@ class SmaLLMsCLI:
   {self.terminal.GREEN}exit{self.terminal.RESET}       - Quit
 
 {self.terminal.BOLD}Interactive Mode:{self.terminal.RESET} arrow keys, space to toggle, enter to confirm
+{self.terminal.BOLD}Local Models:{self.terminal.RESET} if Ollama already has models installed, smaLLMs will reuse them automatically
 {self.terminal.BOLD}Default Core Suite:{self.terminal.RESET} {", ".join(DEFAULT_BENCHMARKS)}
 """
         )
@@ -345,6 +348,25 @@ class SmaLLMsCLI:
         if total_models == 0:
             print(f"\n{self.terminal.YELLOW}No reachable local models found.{self.terminal.RESET}")
         return discovered
+
+    def get_setup_report(self) -> Dict[str, Any]:
+        """Collect a lightweight setup report for local runtimes."""
+        return collect_setup_report().to_dict()
+
+    def build_setup_status_lines(self) -> List[str]:
+        """Build user-facing setup guidance lines."""
+        return build_setup_report_lines(collect_setup_report())
+
+    def show_setup_status(self, json_output: bool = False) -> None:
+        """Show local runtime readiness and next steps."""
+        report = collect_setup_report()
+        if json_output:
+            print(json.dumps(report.to_dict(), indent=2))
+            return
+
+        print(f"\n{self.terminal.BOLD}Setup And Model Status{self.terminal.RESET}")
+        for line in build_setup_report_lines(report):
+            print(line)
 
     def show_benchmarks(self, json_output: bool = False) -> None:
         """Print benchmark and suite metadata."""
@@ -566,6 +588,9 @@ class SmaLLMsCLI:
         models = discovered.get("ollama", []) + discovered.get("lm_studio", [])
         if not models:
             print(f"{self.terminal.YELLOW}No local models found.{self.terminal.RESET}")
+            print("")
+            for line in self.build_setup_status_lines():
+                print(line)
             return
 
         selected_models = self._prompt_model_selection(models)
@@ -614,6 +639,8 @@ class SmaLLMsCLI:
                     self.print_welcome()
                 elif command == "clear":
                     self.print_welcome()
+                elif command in {"doctor", "setup"}:
+                    self.show_setup_status()
                 elif command == "discover":
                     asyncio.run(self.discover_models())
                 elif command == "benchmarks":
@@ -642,7 +669,20 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="interactive",
-        choices=["interactive", "menu", "discover", "discover-local", "benchmarks", "run", "local-run", "quick", "status", "export"],
+        choices=[
+            "interactive",
+            "menu",
+            "doctor",
+            "setup",
+            "discover",
+            "discover-local",
+            "benchmarks",
+            "run",
+            "local-run",
+            "quick",
+            "status",
+            "export",
+        ],
         help="Command to run.",
     )
     parser.add_argument("--models", nargs="*", help="Model names. Supports repeated flags or comma-separated values.")
@@ -650,7 +690,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--samples", type=int, help="Samples per benchmark.")
     parser.add_argument("--all-local", action="store_true", help="Run across all discovered local models.")
     parser.add_argument("--no-export", action="store_true", help="Skip website export after a run.")
-    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON for discover/benchmarks/status.")
+    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON for doctor/discover/benchmarks/status.")
     parser.add_argument("--run-id", help="Run id for export; defaults to the latest run.")
     parser.add_argument("--sync-dir", help="Optional website public/data directory to mirror the exported session bundle into.")
     return parser
@@ -669,6 +709,8 @@ def main() -> None:
     try:
         if command in {"interactive", "menu"}:
             app.run_interactive()
+        elif command in {"doctor", "setup"}:
+            app.show_setup_status(json_output=args.json)
         elif command in {"discover", "discover-local"}:
             asyncio.run(app.discover_models(json_output=args.json))
         elif command == "benchmarks":

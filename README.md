@@ -78,61 +78,71 @@ This distinction matters. Benchmarks like SWE-bench Verified, TauBench, MMMU, or
 
 ## Quick start
 
-### 1. Install dependencies
-
-macOS / Linux / WSL:
-
-```bash
-python3 -m pip install -r requirements-local.txt
-```
-
-Full dependency set:
-
-```bash
-python3 -m pip install -r requirements.txt
-```
+### 1. Run the launcher
 
 Windows 11:
 
 ```powershell
-py -3 -m pip install -r requirements-local.txt
+py -3 start.py
 ```
 
-Full dependency set:
+or double-click:
 
 ```powershell
-py -3 -m pip install -r requirements.txt
+.\start.bat
 ```
 
-### 2. Start a local model runtime
-
-For Ollama:
+macOS / Linux / WSL:
 
 ```bash
-ollama serve
+python3 start.py
+```
+
+The launcher does the user-friendly path automatically:
+- creates `.venv` if you are not already in a virtual environment
+- installs the standard local runtime from `requirements.txt`
+- checks Ollama and LM Studio status
+- tells you whether existing Ollama models were already found
+- opens the arrow-key terminal UI
+
+### 2. If you already have Ollama models installed
+
+You do not need to pull them again.
+
+smaLLMs automatically reuses whatever `ollama list` already shows on your machine. The only thing you need is for Ollama itself to be running.
+
+### 3. If you do not have a local model yet
+
+The fastest path is:
+
+```bash
 ollama pull llama3.2
-ollama pull qwen2.5:0.5b
 ```
 
-Or start LM Studio with its local server enabled.
+You can also use LM Studio instead; just load a model there and keep its local server enabled.
 
-### 3. Launch the arrow-key terminal UI
+### 4. Use the arrow-key terminal UI
 
-```bash
-python3 smaLLMs.py
-```
-
-The default interactive mode is terminal-native:
+The default interface is terminal-native:
 - arrow keys to move
 - `space` to toggle multi-select items
 - `enter` to confirm
 - `q` or `esc` to go back
 
+### Dependency files
+
+- `requirements.txt` is the standard local install for normal users.
+- `requirements-local.txt` still exists only as a backwards-compatible alias.
+- `requirements-dev.txt` is the broader development/legacy environment.
+
 ## Non-interactive CLI
+
+The advanced commands are still available, but they are optional now.
 
 Discover local models:
 
 ```bash
+python3 smaLLMs.py doctor
 python3 smaLLMs.py discover
 ```
 
@@ -232,7 +242,7 @@ Runnable suites currently include:
 ## Current limitations
 
 - Some dependencies are required even for local discovery, including `aiohttp`.
-- `requirements-local.txt` is enough for the local-only CLI path; `requirements.txt` remains the broader environment.
+- The standard local install is intentionally small; use `requirements-dev.txt` only if you need the broader development environment.
 - Frontier agentic benchmarks are tracked in the catalog but not yet executed by the local runner.
 - Results are only as comparable as the local runtime settings and hardware conditions you keep consistent.
 
