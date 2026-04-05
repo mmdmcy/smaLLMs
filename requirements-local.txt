@@ -1,6 +1,4 @@
-# Minimal local-only setup for the smaLLMs terminal runner
-# This avoids heavyweight cloud/model-training dependencies.
+# Backwards-compatible alias for the old local install path.
+# Normal users can use requirements.txt instead.
 
-pyyaml>=6.0.1
-aiohttp>=3.9.0
-datasets>=2.16.0,<4.0.0
+-r requirements.txt

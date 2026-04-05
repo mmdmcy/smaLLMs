@@ -19,6 +19,11 @@ class CLITests(unittest.TestCase):
         args = parser.parse_args(["menu"])
         self.assertEqual(args.command, "menu")
 
+    def test_doctor_command_is_supported(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["doctor"])
+        self.assertEqual(args.command, "doctor")
+
 
 if __name__ == "__main__":
     unittest.main()

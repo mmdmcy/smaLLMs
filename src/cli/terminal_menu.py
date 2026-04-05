@@ -143,6 +143,8 @@ class TerminalMenuApp:
                     action = self._select_main_action(reader)
                     if action == "run":
                         self._run_benchmark_flow(reader)
+                    elif action == "setup":
+                        self._show_setup_status(reader)
                     elif action == "discover":
                         self._show_discovered_models(reader)
                     elif action == "catalog":
@@ -160,6 +162,7 @@ class TerminalMenuApp:
     def _select_main_action(self, reader: CrossPlatformKeyReader) -> str:
         options = [
             MenuOption("Run local benchmark", "run", "Select models, benchmark suite, and sample count"),
+            MenuOption("Setup and model status", "setup", "Check whether Ollama or LM Studio is ready to use"),
             MenuOption("Discover local models", "discover", "Inspect Ollama and LM Studio endpoints"),
             MenuOption("Browse benchmark catalog", "catalog", "Runnable local benchmarks plus tracked frontier evals"),
             MenuOption("Latest run summary", "status", "Open the newest artifact summary"),
@@ -169,8 +172,15 @@ class TerminalMenuApp:
         return self._select_one(
             reader,
             title="smaLLMs",
-            subtitle="Local-first LLM benchmarking for Ollama, LM Studio, and serious open-source eval workflows.",
+            subtitle="Local-first benchmarking. If Ollama already has models installed, smaLLMs will reuse them automatically.",
             options=options,
+        )
+
+    def _show_setup_status(self, reader: CrossPlatformKeyReader) -> None:
+        self._show_message(
+            reader,
+            title="Setup and Model Status",
+            lines=self.app.build_setup_status_lines(),
         )
 
     def _run_benchmark_flow(self, reader: CrossPlatformKeyReader) -> None:
@@ -188,7 +198,8 @@ class TerminalMenuApp:
                     "  - Ollama on http://localhost:11434",
                     "  - LM Studio on http://localhost:1234",
                     "",
-                    "Start a local server first, then retry this screen.",
+                    "If you already pulled Ollama models before, you do not need to pull them again.",
+                    "Just make sure Ollama or LM Studio is running, then retry this screen.",
                 ],
             )
             return

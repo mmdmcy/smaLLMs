@@ -1,0 +1,18 @@
+# Extended environment for development, legacy modules, and optional analysis helpers.
+
+-r requirements.txt
+
+huggingface_hub>=0.20.0
+transformers>=4.36.0
+evaluate>=0.4.1
+torch>=2.1.0
+pandas>=2.1.0
+numpy>=1.24.0
+requests>=2.31.0
+tqdm>=4.66.0
+asyncio-throttle>=1.0.2
+psutil>=5.9.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
