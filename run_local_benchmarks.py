@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 from typing import List, Optional
 
@@ -61,6 +62,15 @@ def _handle_benchmarks(_: argparse.Namespace) -> None:
     print(json.dumps({"suites": list_benchmark_suites(), "benchmarks": list_supported_benchmarks()}, indent=2))
 
 
+def _handle_cache(args: argparse.Namespace) -> None:
+    from src.pipeline.benchmarks import DEFAULT_BENCHMARKS, dataset_runtime_info, warm_benchmark_cache
+    from src.pipeline.orchestrator import LocalBenchmarkOrchestrator
+
+    LocalBenchmarkOrchestrator(config_path=args.config)
+    prepared = warm_benchmark_cache(_parse_list(args.benchmarks) or DEFAULT_BENCHMARKS, args.samples)
+    print(json.dumps({"dataset_runtime": dataset_runtime_info(), "prepared": prepared}, indent=2))
+
+
 def _handle_export(args: argparse.Namespace) -> None:
     from src.pipeline.exporter import WebsiteExporter
 
@@ -95,6 +105,11 @@ def build_parser() -> argparse.ArgumentParser:
     benchmarks_parser = subparsers.add_parser("benchmarks", help="List supported benchmark definitions.")
     benchmarks_parser.set_defaults(handler=_handle_benchmarks)
 
+    cache_parser = subparsers.add_parser("cache", help="Warm the local benchmark dataset cache.")
+    cache_parser.add_argument("--benchmarks", nargs="*", help="Benchmark keys or suite names to cache.")
+    cache_parser.add_argument("--samples", type=int, default=25, help="Rows to cache per benchmark.")
+    cache_parser.set_defaults(handler=_handle_cache)
+
     export_parser = subparsers.add_parser("export", help="Export website files for a run.")
     export_parser.add_argument("--run-id", help="Run id to export. Defaults to the latest run.")
     export_parser.add_argument("--artifacts-dir", default="artifacts", help="Artifact root directory.")
@@ -111,7 +126,7 @@ def main() -> None:
     args = parser.parse_args()
     handler = args.handler
     try:
-        if asyncio.iscoroutinefunction(handler):
+        if inspect.iscoroutinefunction(handler):
             asyncio.run(handler(args))
         else:
             handler(args)

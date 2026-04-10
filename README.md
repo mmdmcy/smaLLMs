@@ -5,18 +5,19 @@
 [![CLI Only](https://img.shields.io/badge/interface-terminal-black)](https://github.com/mmdmcy/smaLLMs)
 [![Local First](https://img.shields.io/badge/runtime-local%20first-green)](https://github.com/mmdmcy/smaLLMs)
 
-CLI-only local LLM benchmarking with a real benchmark catalog, live terminal progress, and structured artifacts for local leaderboards.
+CLI-only local LLM benchmarking with supported benchmark suites, live terminal progress, and structured artifacts for local leaderboards.
 
 smaLLMs is built for:
 - local models running through Ollama or LM Studio
 - cross-platform terminal use on macOS, Linux, Windows 11, and WSL
 - reproducible benchmark runs with raw sample artifacts
-- honest reporting about which benchmarks are runnable today versus only tracked for future support
+- automatic benchmark dataset downloads with local caching outside the repo
 
 Important distinction:
 - model inference is local-first through Ollama or LM Studio
-- benchmark datasets are currently loaded through the Hugging Face `datasets` ecosystem unless you add your own local dataset mirror/cache workflow
-- that means local benchmarking does not currently mean fully offline benchmarking
+- benchmark datasets download automatically through the Hugging Face `datasets` ecosystem on first use
+- after that, smaLLMs reuses the local cache automatically
+- benchmark rows are cached outside the repo in a per-user cache directory, so the git repo itself stays small
 
 ## What smaLLMs is trying to be
 
@@ -26,7 +27,7 @@ smaLLMs is meant to become a serious open benchmarking CLI for local models. Tha
 - the default interface is the terminal, not a web app
 - the interactive mode uses arrow keys and multi-select menus
 - benchmark runs emit machine-readable artifacts for downstream sites and leaderboards
-- the benchmark catalog distinguishes runnable local evals from frontier evals that still require specialized harnesses
+- the CLI lists the benchmarks and suites that actually run today
 
 ## Current runtime support
 
@@ -40,16 +41,16 @@ Platform targets:
 - Windows 11
 - WSL with Windows-hosted Ollama fallback support
 
-## Benchmark model
+## Supported Benchmarks
 
-### Runnable local benchmarks
-
-These ship in the local runner today:
+These benchmarks are supported by the local runner today:
 
 - `gsm8k`
 - `mmlu`
 - `mmlu_pro`
 - `math`
+- `aime_2024`
+- `aime_2025`
 - `arc_challenge`
 - `arc_easy`
 - `hellaswag`
@@ -61,25 +62,18 @@ These ship in the local runner today:
 - `openbookqa`
 - `truthfulqa_mc1`
 - `bbh_boolean_expressions`
-
-### Tracked frontier benchmarks
-
-These are included in the catalog because major labs report them, but smaLLMs does not pretend they are locally runnable yet:
-
-- `aime_2024`
-- `aime_2025`
-- `gpqa_diamond`
-- `swe_bench_verified`
-- `codeforces`
-- `mmmu`
-- `video_mme`
-- `healthbench`
-- `healthbench_hard`
-- `tau_bench`
-- `humanitys_last_exam`
-- `multi_challenge`
-
-This distinction matters. Benchmarks like SWE-bench Verified, TauBench, MMMU, or HealthBench need agentic harnesses, multimodal graders, tool environments, or private/specialized evaluation pipelines. smaLLMs tracks them explicitly instead of faking support.
+- `graphwalks_bfs_0_128k`
+- `graphwalks_bfs_256k_1m`
+- `graphwalks_parents_0_128k`
+- `graphwalks_parents_256k_1m`
+- `mrcr_v2_8needle_4k_8k`
+- `mrcr_v2_8needle_8k_16k`
+- `mrcr_v2_8needle_16k_32k`
+- `mrcr_v2_8needle_32k_64k`
+- `mrcr_v2_8needle_64k_128k`
+- `mrcr_v2_8needle_128k_256k`
+- `mrcr_v2_8needle_256k_512k`
+- `mrcr_v2_8needle_512k_1m`
 
 ## Quick start
 
@@ -137,8 +131,7 @@ The default interface is terminal-native:
 ### Dependency files
 
 - `requirements.txt` is the standard local install for normal users.
-- `requirements-local.txt` still exists only as a backwards-compatible alias.
-- `requirements-dev.txt` is the broader development/legacy environment.
+- `requirements-dev.txt` is only for development work on the repo.
 
 ## Non-interactive CLI
 
@@ -151,7 +144,7 @@ python3 smaLLMs.py doctor
 python3 smaLLMs.py discover
 ```
 
-Inspect suites and the benchmark catalog:
+Inspect supported suites and benchmarks:
 
 ```bash
 python3 smaLLMs.py benchmarks
@@ -240,16 +233,16 @@ Runnable suites currently include:
 
 - Local-first: evaluate models on the user’s own hardware.
 - CLI-only: the terminal is the primary product surface.
-- Honest benchmark accounting: runnable versus tracked is explicit.
+- Supported means runnable now.
 - Open artifacts: every run should be exportable and inspectable.
 - Cross-platform pragmatism: no platform should be treated as second-class.
 
 ## Current limitations
 
 - Some dependencies are required even for local discovery, including `aiohttp`.
-- Benchmark datasets are fetched via Hugging Face `datasets`/HF Hub unless already cached locally, so the current runner still needs that data path even when model inference stays local.
+- Benchmark datasets come from Hugging Face `datasets`/HF Hub on first use, so the first run of an uncached benchmark still needs network access.
+- A fully offline run is possible only after the needed benchmark rows have already been cached locally.
 - The standard local install is intentionally small; use `requirements-dev.txt` only if you need the broader development environment.
-- Frontier agentic benchmarks are tracked in the catalog but not yet executed by the local runner.
 - Results are only as comparable as the local runtime settings and hardware conditions you keep consistent.
 
 ## Short roadmap

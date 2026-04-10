@@ -5,15 +5,28 @@ Reliable dataset-backed benchmarks for local model evaluation.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
+import logging
 import math
+import os
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 
 ProgressCallback = Optional[Callable[[Dict[str, Any]], None]]
+LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class DatasetRuntimeSettings:
+    """Runtime settings for benchmark dataset access and local sample caching."""
+
+    cache_dir: Path
+    allow_remote_downloads: bool = True
 
 
 @dataclass(frozen=True)
@@ -61,6 +74,133 @@ MATH_CONFIGS = [
 ]
 
 
+def _default_dataset_cache_dir() -> Path:
+    """Return the per-user benchmark cache directory outside the git repo."""
+    if os.name == "nt":
+        root = Path(os.getenv("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        return root / "smaLLMs" / "benchmark_cache"
+
+    root = Path(os.getenv("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    return root / "smaLLMs" / "benchmark_cache"
+
+
+_DATASET_RUNTIME = DatasetRuntimeSettings(cache_dir=_default_dataset_cache_dir())
+
+
+def configure_dataset_runtime(settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Configure where benchmark rows are cached and whether remote fetches are allowed."""
+    settings = settings or {}
+    configured_dir = settings.get("dataset_cache_dir")
+    cache_dir = Path(configured_dir).expanduser() if configured_dir else _default_dataset_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    global _DATASET_RUNTIME
+    _DATASET_RUNTIME = DatasetRuntimeSettings(
+        cache_dir=cache_dir,
+        allow_remote_downloads=bool(settings.get("allow_remote_dataset_downloads", True)),
+    )
+    return dataset_runtime_info()
+
+
+def dataset_runtime_info() -> Dict[str, Any]:
+    """Return the active dataset runtime configuration."""
+    return {
+        "cache_dir": str(_DATASET_RUNTIME.cache_dir),
+        "allow_remote_dataset_downloads": _DATASET_RUNTIME.allow_remote_downloads,
+    }
+
+
+def _cache_slug(cache_key: str) -> str:
+    """Build a stable filename-safe cache slug."""
+    cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "_", cache_key).strip("._-") or "benchmark"
+    digest = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:8]
+    return f"{cleaned}_{digest}"
+
+
+def _cache_paths(cache_key: str) -> Tuple[Path, Path]:
+    """Return the JSONL and metadata paths for one benchmark cache."""
+    slug = _cache_slug(cache_key)
+    return (
+        _DATASET_RUNTIME.cache_dir / f"{slug}.jsonl",
+        _DATASET_RUNTIME.cache_dir / f"{slug}.meta.json",
+    )
+
+
+def _to_jsonable(value: Any) -> Any:
+    """Convert dataset rows into JSON-safe plain Python values."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_jsonable(item) for item in value]
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return value.item()
+        except Exception:
+            pass
+    return str(value)
+
+
+def _read_cached_rows(cache_key: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Read cached benchmark rows from JSONL."""
+    rows_path, _ = _cache_paths(cache_key)
+    if not rows_path.exists():
+        return []
+
+    rows: List[Dict[str, Any]] = []
+    with open(rows_path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            rows.append(json.loads(line))
+            if limit is not None and len(rows) >= limit:
+                break
+    return rows
+
+
+def _write_cached_rows(cache_key: str, rows: Sequence[Dict[str, Any]], metadata: Dict[str, Any]) -> None:
+    """Write benchmark rows and metadata into the user cache directory."""
+    rows_path, meta_path = _cache_paths(cache_key)
+    rows_path.parent.mkdir(parents=True, exist_ok=True)
+
+    safe_rows = [_to_jsonable(row) for row in rows]
+    with open(rows_path, "w", encoding="utf-8") as handle:
+        for row in safe_rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    payload = dict(metadata)
+    payload.update({"cache_key": cache_key, "cached_rows": len(safe_rows), "rows_path": str(rows_path)})
+    with open(meta_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+
+def _load_rows_with_cache(
+    cache_key: str,
+    limit: int,
+    loader: Callable[[int], List[Dict[str, Any]]],
+    metadata: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Reuse cached rows when possible, otherwise fetch once and persist them locally."""
+    cached_rows = _read_cached_rows(cache_key, limit=limit)
+    if len(cached_rows) >= limit:
+        return cached_rows[:limit]
+
+    if not _DATASET_RUNTIME.allow_remote_downloads:
+        rows_path, _ = _cache_paths(cache_key)
+        raise RuntimeError(
+            f"Benchmark '{cache_key}' needs {limit} cached row(s), but only {len(cached_rows)} are available in "
+            f"{rows_path}. Re-enable remote dataset downloads once, or warm the cache while online."
+        )
+
+    rows = loader(limit)
+    if rows:
+        _write_cached_rows(cache_key, rows, metadata)
+        LOGGER.info("Cached %s row(s) for benchmark %s in %s", len(rows), cache_key, _cache_paths(cache_key)[0])
+    return rows
+
+
 def _safe_load_dataset(
     dataset_name: str,
     config_name: Optional[str],
@@ -72,7 +212,13 @@ def _safe_load_dataset(
     kwargs: Dict[str, Any] = {
         "split": split,
         "streaming": True,
+        "download_mode": "reuse_cache_if_exists",
     }
+
+    if not _DATASET_RUNTIME.allow_remote_downloads:
+        raise RuntimeError(
+            f"Remote dataset downloads are disabled, so dataset '{dataset_name}' cannot be fetched right now."
+        )
 
     try:
         if config_name:
@@ -476,10 +622,23 @@ class DatasetBenchmark(ABC):
     category: str = "general"
     max_tokens: int = 128
 
-    def load_rows(self, limit: int) -> List[Dict[str, Any]]:
-        """Load a bounded sample from the benchmark dataset."""
+    def cache_metadata(self) -> Dict[str, Any]:
+        """Return metadata stored alongside the cached JSONL rows."""
+        return {
+            "benchmark_key": self.key,
+            "dataset_name": self.dataset_name,
+            "config_name": self.config_name,
+            "split": self.split,
+        }
+
+    def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
+        """Load rows directly from the upstream dataset source."""
         dataset = _safe_load_dataset(self.dataset_name, self.config_name, self.split)
         return _take_samples(dataset, limit)
+
+    def load_rows(self, limit: int) -> List[Dict[str, Any]]:
+        """Load a bounded sample from the local cache or upstream dataset source."""
+        return _load_rows_with_cache(self.key, limit, self._load_rows_uncached, self.cache_metadata())
 
     @abstractmethod
     def build_prompt(self, row: Dict[str, Any]) -> str:
@@ -724,7 +883,7 @@ class HendrycksMathBenchmark(DatasetBenchmark):
     category = "reasoning"
     max_tokens = 384
 
-    def load_rows(self, limit: int) -> List[Dict[str, Any]]:
+    def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
         """Round-robin across the seven MATH configs for balanced sampling."""
         iterators: List[Iterator[Dict[str, Any]]] = [
             iter(_safe_load_dataset(self.dataset_name, config_name, self.split))
@@ -865,7 +1024,7 @@ class GraphwalksBenchmark(DatasetBenchmark):
         self.min_prompt_chars = min_prompt_chars
         self.max_prompt_chars = max_prompt_chars
 
-    def load_rows(self, limit: int) -> List[Dict[str, Any]]:
+    def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
         dataset = _safe_load_dataset(self.dataset_name, self.config_name, self.split)
         return _take_filtered_samples(
             dataset,
@@ -917,7 +1076,7 @@ class MRCRBenchmark(DatasetBenchmark):
         self.min_chars = min_chars
         self.max_chars = max_chars
 
-    def load_rows(self, limit: int) -> List[Dict[str, Any]]:
+    def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
         dataset = _safe_load_dataset(self.dataset_name, self.config_name, self.split)
         return _take_filtered_samples(
             dataset,
@@ -1713,12 +1872,6 @@ BENCHMARK_CATALOG: Dict[str, BenchmarkCatalogEntry] = {
 def get_supported_benchmark(name: str) -> DatasetBenchmark:
     """Return a supported benchmark or raise a clear error."""
     if name not in SUPPORTED_BENCHMARKS:
-        if name in BENCHMARK_CATALOG:
-            entry = BENCHMARK_CATALOG[name]
-            raise ValueError(
-                f"Benchmark '{name}' is tracked by smaLLMs but is not locally runnable yet "
-                f"(status: {entry.status}, harness: {entry.harness})."
-            )
         supported = ", ".join(sorted(SUPPORTED_BENCHMARKS))
         raise ValueError(f"Unsupported benchmark '{name}'. Supported benchmarks: {supported}")
     return SUPPORTED_BENCHMARKS[name]
@@ -1736,14 +1889,8 @@ def expand_benchmark_selection(selection: Optional[Sequence[str]]) -> List[str]:
             expanded.extend(BENCHMARK_SUITES[key]["benchmarks"])
         elif key in SUPPORTED_BENCHMARKS:
             expanded.append(key)
-        elif key in TRACKED_BENCHMARK_CATALOG:
-            entry = TRACKED_BENCHMARK_CATALOG[key]
-            raise ValueError(
-                f"Benchmark '{item}' is tracked but not locally runnable yet "
-                f"(status: {entry.status}, harness: {entry.harness})."
-            )
         else:
-            supported = ", ".join(sorted(list(BENCHMARK_CATALOG) + list(BENCHMARK_SUITES)))
+            supported = ", ".join(sorted(list(SUPPORTED_BENCHMARKS) + list(BENCHMARK_SUITES)))
             raise ValueError(f"Unknown benchmark or suite '{item}'. Supported names: {supported}")
 
     deduped: List[str] = []
@@ -1783,3 +1930,27 @@ def list_benchmark_suites() -> List[Dict[str, Any]]:
         }
         for key, payload in BENCHMARK_SUITES.items()
     ]
+
+
+def warm_benchmark_cache(selection: Optional[Sequence[str]], samples: int) -> List[Dict[str, Any]]:
+    """Fetch and cache benchmark rows for later low-network or offline runs."""
+    benchmark_names = expand_benchmark_selection(selection)
+    prepared: List[Dict[str, Any]] = []
+
+    for benchmark_name in benchmark_names:
+        benchmark = get_supported_benchmark(benchmark_name)
+        rows = benchmark.load_rows(samples)
+        rows_path, meta_path = _cache_paths(benchmark.key)
+        prepared.append(
+            {
+                "benchmark": benchmark.key,
+                "display_name": benchmark.display_name,
+                "requested_samples": samples,
+                "cached_rows": len(rows),
+                "rows_path": str(rows_path),
+                "meta_path": str(meta_path),
+                "ready": len(rows) >= samples,
+            }
+        )
+
+    return prepared

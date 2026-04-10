@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from src.pipeline.benchmarks import (
     DEFAULT_BENCHMARKS,
-    list_benchmark_catalog,
+    list_benchmark_suites,
     list_supported_benchmarks,
 )
 
@@ -164,7 +164,7 @@ class TerminalMenuApp:
             MenuOption("Run local benchmark", "run", "Select models, benchmark suite, and sample count"),
             MenuOption("Setup and model status", "setup", "Check whether Ollama or LM Studio is ready to use"),
             MenuOption("Discover local models", "discover", "Inspect Ollama and LM Studio endpoints"),
-            MenuOption("Browse benchmark catalog", "catalog", "Runnable local benchmarks plus tracked frontier evals"),
+            MenuOption("Browse supported benchmarks", "catalog", "Runnable suites and benchmarks"),
             MenuOption("Latest run summary", "status", "Open the newest artifact summary"),
             MenuOption("Export latest run", "export", "Refresh website bundle from the latest artifacts"),
             MenuOption("Quit", "quit", "Exit smaLLMs"),
@@ -339,27 +339,21 @@ class TerminalMenuApp:
         self._show_message(reader, title="Local Model Discovery", lines=lines)
 
     def _show_benchmark_catalog(self, reader: CrossPlatformKeyReader) -> None:
-        catalog = list_benchmark_catalog()
+        suites = list_benchmark_suites()
+        benchmarks = list_supported_benchmarks()
         lines: List[str] = []
-        runnable = [entry for entry in catalog if entry["local_runnable"]]
-        tracked = [entry for entry in catalog if not entry["local_runnable"]]
-
-        lines.append(f"Runnable locally: {len(runnable)}")
-        for entry in runnable:
+        lines.append(f"Supported suites: {len(suites)}")
+        for suite in suites:
+            lines.append(
+                f"  - {suite['key']} | {suite['display_name']} | {', '.join(suite['benchmarks'])}"
+            )
+        lines.append("")
+        lines.append(f"Supported benchmarks: {len(benchmarks)}")
+        for entry in benchmarks:
             lines.append(
                 f"  - {entry['key']} [{entry['category']}] | {entry['display_name']} | {entry['description']}"
             )
-        lines.append("")
-        lines.append(f"Tracked frontier benchmarks: {len(tracked)}")
-        for entry in tracked:
-            lines.append(
-                f"  - {entry['key']} [{entry['status'].replace('_', ' ')}] | "
-                f"{entry['display_name']} | {entry['harness'].replace('_', ' ')}"
-            )
-        lines.append("")
-        lines.append("Tracked entries are included so smaLLMs can be honest about what is runnable now")
-        lines.append("versus what still needs a specialist harness, private data, or multi-turn tool setup.")
-        self._show_message(reader, title="Benchmark Catalog", lines=lines)
+        self._show_message(reader, title="Supported Benchmarks", lines=lines)
 
     def _show_latest_run(self, reader: CrossPlatformKeyReader) -> None:
         latest_run_id = self.app.artifact_store.latest_run_id()
