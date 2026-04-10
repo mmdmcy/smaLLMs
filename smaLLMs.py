@@ -14,8 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-import yaml
-
 sys.path.append(str(Path(__file__).parent))
 
 from src.pipeline.benchmarks import (
@@ -25,6 +23,15 @@ from src.pipeline.benchmarks import (
     list_benchmark_suites,
     list_supported_benchmarks,
     warm_benchmark_cache,
+)
+from src.pipeline.config import (
+    DEFAULT_ARTIFACTS_DIR,
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_LOCAL_PROVIDER,
+    DEFAULT_LOCAL_SAMPLE_COUNT,
+    DEFAULT_WEBSITE_EXPORT_DIR,
+    load_pipeline_config,
+    local_benchmark_settings,
 )
 from src.cli.setup_checks import build_setup_report_lines, collect_setup_report
 
@@ -245,41 +252,29 @@ class BeautifulSmaLLMsTerminal:
 class SmaLLMsCLI:
     """Main local CLI application."""
 
-    def __init__(self, config_path: str = "config/config.yaml") -> None:
+    def __init__(self, config_path: str = DEFAULT_CONFIG_PATH) -> None:
         self.config_path = config_path
         self.config = self.load_config(config_path)
+        self.local_settings = local_benchmark_settings(self.config, DEFAULT_BENCHMARKS)
         self.terminal = BeautifulSmaLLMsTerminal()
         self.orchestrator = None
 
         from src.pipeline.artifacts import ArtifactStore
         from src.pipeline.exporter import WebsiteExporter
 
-        self.artifact_store = ArtifactStore(self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts"))
+        self.artifact_store = ArtifactStore(self.local_settings.get("artifacts_dir", DEFAULT_ARTIFACTS_DIR))
         self.exporter = WebsiteExporter(
-            artifacts_dir=self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts"),
-            output_dir=self.config.get("local_benchmarks", {}).get("website_export_dir", "website_exports"),
-            sync_dir=self.config.get("local_benchmarks", {}).get("website_sync_dir"),
+            artifacts_dir=self.local_settings.get("artifacts_dir", DEFAULT_ARTIFACTS_DIR),
+            output_dir=self.local_settings.get("website_export_dir", DEFAULT_WEBSITE_EXPORT_DIR),
+            sync_dir=self.local_settings.get("website_sync_dir"),
         )
 
-        Path(self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts")).mkdir(parents=True, exist_ok=True)
-        Path(self.config.get("local_benchmarks", {}).get("website_export_dir", "website_exports")).mkdir(parents=True, exist_ok=True)
+        Path(self.local_settings.get("artifacts_dir", DEFAULT_ARTIFACTS_DIR)).mkdir(parents=True, exist_ok=True)
+        Path(self.local_settings.get("website_export_dir", DEFAULT_WEBSITE_EXPORT_DIR)).mkdir(parents=True, exist_ok=True)
 
     def load_config(self, config_path: str) -> Dict[str, Any]:
-        """Load config from YAML with lightweight defaults."""
-        path = Path(config_path)
-        if not path.exists():
-            return {
-                "local_benchmarks": {
-                    "artifacts_dir": "artifacts",
-                    "website_export_dir": "website_exports",
-                    "website_sync_dir": "../websmaLLMs/public/data",
-                    "default_samples": 10,
-                    "default_benchmarks": list(DEFAULT_BENCHMARKS),
-                    "export_after_run": True,
-                }
-            }
-        with open(path, "r", encoding="utf-8") as handle:
-            return yaml.safe_load(handle) or {}
+        """Load config from YAML with shared pipeline defaults."""
+        return load_pipeline_config(config_path, DEFAULT_BENCHMARKS)
 
     def _get_orchestrator(self) -> Any:
         """Initialize the heavy runner only when needed."""
@@ -292,6 +287,7 @@ class SmaLLMsCLI:
     def print_welcome(self) -> None:
         """Print the main interactive welcome screen."""
         self.terminal.clear_screen()
+        default_benchmarks = ", ".join(self.local_settings.get("default_benchmarks", DEFAULT_BENCHMARKS))
         print(
             f"""
 {self.terminal.CYAN}╔══════════════════════════════════════════════════════════════════════════════╗
@@ -312,7 +308,7 @@ class SmaLLMsCLI:
 
 {self.terminal.BOLD}Interactive Mode:{self.terminal.RESET} arrow keys, space to toggle, enter to confirm
 {self.terminal.BOLD}Local Models:{self.terminal.RESET} if Ollama already has models installed, smaLLMs will reuse them automatically
-{self.terminal.BOLD}Default Core Suite:{self.terminal.RESET} {", ".join(DEFAULT_BENCHMARKS)}
+{self.terminal.BOLD}Default Core Suite:{self.terminal.RESET} {default_benchmarks}
 """
         )
 
@@ -450,8 +446,8 @@ class SmaLLMsCLI:
             from src.pipeline.exporter import WebsiteExporter
 
             exporter = WebsiteExporter(
-                artifacts_dir=self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts"),
-                output_dir=self.config.get("local_benchmarks", {}).get("website_export_dir", "website_exports"),
+                artifacts_dir=self.local_settings.get("artifacts_dir", DEFAULT_ARTIFACTS_DIR),
+                output_dir=self.local_settings.get("website_export_dir", DEFAULT_WEBSITE_EXPORT_DIR),
                 sync_dir=sync_dir,
             )
             exported = exporter.export_run(run_id)
@@ -469,8 +465,10 @@ class SmaLLMsCLI:
     ) -> List[Dict[str, Any]]:
         """Warm the benchmark sample cache outside the repository."""
         self._get_orchestrator()
-        benchmark_selection = benchmarks or list(DEFAULT_BENCHMARKS)
-        sample_count = samples or int(self.config.get("local_benchmarks", {}).get("default_samples", 10))
+        benchmark_selection = benchmarks or list(self.local_settings.get("default_benchmarks", DEFAULT_BENCHMARKS))
+        sample_count = samples if samples is not None else int(
+            self.local_settings.get("default_samples", DEFAULT_LOCAL_SAMPLE_COUNT)
+        )
         prepared = warm_benchmark_cache(benchmark_selection, sample_count)
         dataset_runtime = dataset_runtime_info()
 
@@ -539,7 +537,7 @@ class SmaLLMsCLI:
 
     def _prompt_sample_count(self) -> int:
         """Prompt for sample count."""
-        default_samples = int(self.config.get("local_benchmarks", {}).get("default_samples", 10))
+        default_samples = int(self.local_settings.get("default_samples", DEFAULT_LOCAL_SAMPLE_COUNT))
         print(f"\n{self.terminal.BOLD}Sample Count{self.terminal.RESET}")
         print("Suggested: 3 quick, 10 useful, 25 stable, 50+ serious.")
         raw = input(f"{self.terminal.CYAN}Samples per benchmark [{default_samples}]:{self.terminal.RESET} ").strip()
@@ -562,20 +560,23 @@ class SmaLLMsCLI:
         all_local: bool = False,
     ) -> Dict[str, Any]:
         """Run benchmarks with the live terminal renderer attached."""
-        benchmark_selection = benchmarks or list(DEFAULT_BENCHMARKS)
+        benchmark_selection = benchmarks or list(self.local_settings.get("default_benchmarks", DEFAULT_BENCHMARKS))
         expanded_benchmarks = expand_benchmark_selection(benchmark_selection)
         orchestrator = self._get_orchestrator()
+        default_provider = self.local_settings.get("default_provider", DEFAULT_LOCAL_PROVIDER)
 
         if not models:
             discovered = await orchestrator.discover_local_models()
             if all_local:
                 models = [entry["name"] for entries in discovered.values() for entry in entries]
             else:
-                models = [entry["name"] for entry in discovered.get("ollama", [])]
+                models = [entry["name"] for entry in discovered.get(default_provider, [])]
         if not models:
             raise RuntimeError("No local models found. Start Ollama or LM Studio, or pass --models explicitly.")
 
-        sample_count = samples or int(self.config.get("local_benchmarks", {}).get("default_samples", 10))
+        sample_count = samples if samples is not None else int(
+            self.local_settings.get("default_samples", DEFAULT_LOCAL_SAMPLE_COUNT)
+        )
         run_id = f"pending_{int(time.time())}"
         self.terminal.start_run(run_id, models, expanded_benchmarks, sample_count)
 
@@ -583,7 +584,7 @@ class SmaLLMsCLI:
             models=models,
             benchmarks=benchmark_selection,
             samples=sample_count,
-            provider="ollama",
+            provider=default_provider,
             all_local=all_local,
             export_after_run=export_after_run,
             progress_callback=self.terminal.handle_event,
@@ -599,8 +600,8 @@ class SmaLLMsCLI:
         print(f"  Accuracy: {totals.get('accuracy', 0.0):.4f}")
         print(f"  Samples: {totals.get('samples', 0)}")
         print(f"  Artifacts: {result['run_dir']}")
-        website_dir = self.config.get("local_benchmarks", {}).get("website_export_dir", "website_exports")
-        sync_dir = self.config.get("local_benchmarks", {}).get("website_sync_dir")
+        website_dir = self.local_settings.get("website_export_dir", DEFAULT_WEBSITE_EXPORT_DIR)
+        sync_dir = self.local_settings.get("website_sync_dir")
         if export_after_run is not False:
             print(f"  Website export: {website_dir}/latest")
             if sync_dir:
@@ -632,7 +633,7 @@ class SmaLLMsCLI:
         """Run the default core suite with a small sample count."""
         return await self.run_benchmarks(
             models=None,
-            benchmarks=list(DEFAULT_BENCHMARKS),
+            benchmarks=list(self.local_settings.get("default_benchmarks", DEFAULT_BENCHMARKS)),
             samples=samples,
             export_after_run=True,
             all_local=True,
@@ -691,7 +692,7 @@ class SmaLLMsCLI:
 def build_parser() -> argparse.ArgumentParser:
     """Construct the top-level CLI parser."""
     parser = argparse.ArgumentParser(description="smaLLMs local CLI for benchmarking local LLMs.")
-    parser.add_argument("--config", default="config/config.yaml", help="Path to the YAML config file.")
+    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="Path to the YAML config file.")
     parser.add_argument(
         "command",
         nargs="?",

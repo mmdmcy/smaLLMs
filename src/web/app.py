@@ -1,6 +1,6 @@
 """
-Web interface for smaLLMs evaluation platform.
-Provides an intuitive dashboard for running evaluations and viewing results.
+Legacy web interface for the older smaLLMs evaluation stack.
+The modern pipeline is CLI-first; this surface is experimental and secondary.
 """
 
 import gradio as gr
@@ -19,11 +19,12 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from evaluator import EvaluationOrchestrator, EvaluationConfig, quick_eval, compare_models
 from models.model_manager import RECOMMENDED_MODELS
 from benchmarks.benchmark_registry import STANDARD_BENCHMARK_SUITE, QUICK_BENCHMARK_SUITE
+from pipeline.config import DEFAULT_CONFIG_PATH
 
 class WebInterface:
-    """Main web interface for the smaLLMs platform."""
+    """Experimental web interface for the legacy evaluation stack."""
     
-    def __init__(self, config_path: str = "config/config.yaml"):
+    def __init__(self, config_path: str = DEFAULT_CONFIG_PATH):
         self.orchestrator = EvaluationOrchestrator(config_path)
         self.config = self._load_config(config_path)
         
@@ -49,11 +50,11 @@ class WebInterface:
             
             # Header
             gr.Markdown("""
-            #  smaLLMs - State-of-the-Art Small Model Evaluation
+            # smaLLMs Experimental Web Interface
             
-            **The ultimate platform for evaluating small language models (1B-20B parameters)**
+            **Legacy dashboard for the older evaluation stack**
             
-            Featuring enterprise-grade benchmarks used by leading AI labs: MMLU, GSM8K, MATH, HumanEval and more.
+            The primary maintained workflow is the CLI-first local benchmark pipeline.
             """)
             
             with gr.Tabs():
@@ -701,7 +702,7 @@ class WebInterface:
         except Exception as e:
             return f"Cleanup failed: {str(e)}"
 
-def create_web_app(config_path: str = "config/config.yaml", share: bool = False, server_name: str = "127.0.0.1", server_port: int = 7860):
+def create_web_app(config_path: str = DEFAULT_CONFIG_PATH, share: bool = False, server_name: str = "127.0.0.1", server_port: int = 7860):
     """Create and launch the web application."""
     web_interface = WebInterface(config_path)
     app = web_interface.create_interface()

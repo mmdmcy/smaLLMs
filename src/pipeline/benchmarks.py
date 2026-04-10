@@ -628,11 +628,41 @@ def _math_equal(left: str, right: str) -> bool:
 
 def summarize_samples(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Aggregate per-sample records into benchmark-level metrics."""
+    def used_raw_fallback(sample: Dict[str, Any]) -> bool:
+        raw_metrics = sample.get("raw_provider_metrics") or {}
+        return bool(sample.get("used_raw_fallback") or raw_metrics.get("used_raw_fallback"))
+
+    def raw_fallback_attempted(sample: Dict[str, Any]) -> bool:
+        raw_metrics = sample.get("raw_provider_metrics") or {}
+        return bool(
+            sample.get("raw_fallback_attempted")
+            or sample.get("used_raw_fallback")
+            or raw_metrics.get("raw_fallback_attempted")
+            or raw_metrics.get("used_raw_fallback")
+        )
+
+    def metric_series(field: str, numerators: List[int], denominators: List[float]) -> List[float]:
+        """Prefer explicit per-sample rates and only derive them when absent."""
+        values: List[float] = []
+        for index, sample in enumerate(samples):
+            if field in sample and sample.get(field) is not None:
+                candidate = float(sample.get(field) or 0.0)
+            elif numerators[index] > 0 and denominators[index] > 0:
+                candidate = numerators[index] / denominators[index]
+            else:
+                candidate = 0.0
+
+            if candidate > 0:
+                values.append(candidate)
+        return values
+
     sample_count = len(samples)
     correct_count = sum(1 for sample in samples if sample.get("is_correct"))
     total_errors = sum(1 for sample in samples if sample.get("error"))
     successful_count = sum(1 for sample in samples if not sample.get("error"))
     responded_count = sum(1 for sample in samples if str(sample.get("response_text") or "").strip())
+    raw_fallback_count = sum(1 for sample in samples if used_raw_fallback(sample))
+    raw_fallback_attempted_count = sum(1 for sample in samples if raw_fallback_attempted(sample))
     total_prompt_tokens = sum(int(sample.get("prompt_tokens") or 0) for sample in samples)
     total_completion_tokens = sum(int(sample.get("completion_tokens") or 0) for sample in samples)
     total_tokens = sum(int(sample.get("total_tokens") or 0) for sample in samples)
@@ -648,11 +678,14 @@ def summarize_samples(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
     response_chars = [int(sample.get("response_chars") or 0) for sample in samples]
     expected_answer_chars = [int(sample.get("expected_answer_chars") or 0) for sample in samples]
     parsed_prediction_chars = [int(sample.get("parsed_prediction_chars") or 0) for sample in samples]
-    tps = [
-        float(sample.get("tokens_per_second") or 0.0)
-        for sample in samples
-        if float(sample.get("tokens_per_second") or 0.0) > 0
-    ]
+    tps = metric_series("tokens_per_second", completion_tokens, latencies)
+    eval_tps = metric_series("eval_tokens_per_second", completion_tokens, eval_durations)
+    prompt_tps = metric_series("prompt_tokens_per_second", prompt_tokens, prompt_eval_durations)
+    total_latency_sec = sum(latencies)
+    total_load_duration_sec = sum(load_durations)
+    total_prompt_eval_duration_sec = sum(prompt_eval_durations)
+    total_eval_duration_sec = sum(eval_durations)
+    total_total_duration_sec = sum(total_durations)
 
     def avg(values: List[float] | List[int]) -> float:
         return round(sum(values) / sample_count, 4) if sample_count else 0.0
@@ -671,19 +704,28 @@ def summarize_samples(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
         "success_rate": round(successful_count / sample_count, 4) if sample_count else 0.0,
         "responded_count": responded_count,
         "response_rate": round(responded_count / sample_count, 4) if sample_count else 0.0,
+        "raw_fallback_count": raw_fallback_count,
+        "raw_fallback_rate": round(raw_fallback_count / sample_count, 4) if sample_count else 0.0,
+        "raw_fallback_attempted_count": raw_fallback_attempted_count,
+        "raw_fallback_attempted_rate": round(raw_fallback_attempted_count / sample_count, 4) if sample_count else 0.0,
         "error_count": total_errors,
+        "total_latency_sec": round(total_latency_sec, 4),
         "avg_latency_sec": avg(latencies),
         "max_latency_sec": max_value(latencies),
         "min_latency_sec": min_value(latencies),
+        "total_load_duration_sec": round(total_load_duration_sec, 4),
         "avg_load_duration_sec": avg(load_durations),
         "max_load_duration_sec": max_value(load_durations),
         "min_load_duration_sec": min_value(load_durations),
+        "total_prompt_eval_duration_sec": round(total_prompt_eval_duration_sec, 4),
         "avg_prompt_eval_duration_sec": avg(prompt_eval_durations),
         "max_prompt_eval_duration_sec": max_value(prompt_eval_durations),
         "min_prompt_eval_duration_sec": min_value(prompt_eval_durations),
+        "total_eval_duration_sec": round(total_eval_duration_sec, 4),
         "avg_eval_duration_sec": avg(eval_durations),
         "max_eval_duration_sec": max_value(eval_durations),
         "min_eval_duration_sec": min_value(eval_durations),
+        "total_total_duration_sec": round(total_total_duration_sec, 4),
         "avg_total_duration_sec": avg(total_durations),
         "max_total_duration_sec": max_value(total_durations),
         "min_total_duration_sec": min_value(total_durations),
@@ -707,9 +749,24 @@ def summarize_samples(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
         "avg_response_chars": avg(response_chars),
         "avg_expected_answer_chars": avg(expected_answer_chars),
         "avg_parsed_prediction_chars": avg(parsed_prediction_chars),
+        "overall_tokens_per_second": round(total_completion_tokens / total_latency_sec, 4)
+        if total_latency_sec > 0
+        else 0.0,
         "avg_tokens_per_second": round(sum(tps) / len(tps), 4) if tps else 0.0,
         "max_tokens_per_second": max_value(tps),
         "min_tokens_per_second": min_value(tps),
+        "overall_eval_tokens_per_second": round(total_completion_tokens / total_eval_duration_sec, 4)
+        if total_eval_duration_sec > 0
+        else 0.0,
+        "avg_eval_tokens_per_second": round(sum(eval_tps) / len(eval_tps), 4) if eval_tps else 0.0,
+        "max_eval_tokens_per_second": max_value(eval_tps),
+        "min_eval_tokens_per_second": min_value(eval_tps),
+        "overall_prompt_tokens_per_second": round(total_prompt_tokens / total_prompt_eval_duration_sec, 4)
+        if total_prompt_eval_duration_sec > 0
+        else 0.0,
+        "avg_prompt_tokens_per_second": round(sum(prompt_tps) / len(prompt_tps), 4) if prompt_tps else 0.0,
+        "max_prompt_tokens_per_second": max_value(prompt_tps),
+        "min_prompt_tokens_per_second": min_value(prompt_tps),
         "local_cost_estimate": 0.0,
     }
 
@@ -845,6 +902,10 @@ class DatasetBenchmark(ABC):
                 "completion_tokens": generation.completion_tokens,
                 "total_tokens": generation.total_tokens,
                 "tokens_per_second": round(generation.tokens_per_second, 6),
+                "eval_tokens_per_second": round(generation.eval_tokens_per_second, 6),
+                "prompt_tokens_per_second": round(generation.prompt_tokens_per_second, 6),
+                "used_raw_fallback": generation.used_raw_fallback,
+                "raw_fallback_attempted": generation.raw_fallback_attempted,
                 "raw_provider_metrics": generation.raw,
             }
             sample.update(self.sample_metadata(row))
@@ -1615,14 +1676,6 @@ SUPPORTED_BENCHMARKS: Dict[str, DatasetBenchmark] = {
         min_prompt_chars=0,
         max_prompt_chars=128000,
     ),
-    "graphwalks_bfs_256k_1m": GraphwalksBenchmark(
-        key="graphwalks_bfs_256k_1m",
-        display_name="Graphwalks BFS 256K-1M",
-        description="OpenAI Graphwalks breadth-first search tasks with 256K-1M character prompts.",
-        problem_type="bfs",
-        min_prompt_chars=256000,
-        max_prompt_chars=1000000,
-    ),
     "graphwalks_parents_0_128k": GraphwalksBenchmark(
         key="graphwalks_parents_0_128k",
         display_name="Graphwalks Parents 0K-128K",
@@ -1630,14 +1683,6 @@ SUPPORTED_BENCHMARKS: Dict[str, DatasetBenchmark] = {
         problem_type="parents",
         min_prompt_chars=0,
         max_prompt_chars=128000,
-    ),
-    "graphwalks_parents_256k_1m": GraphwalksBenchmark(
-        key="graphwalks_parents_256k_1m",
-        display_name="Graphwalks Parents 256K-1M",
-        description="OpenAI Graphwalks parent-retrieval tasks with 256K-1M character prompts.",
-        problem_type="parents",
-        min_prompt_chars=256000,
-        max_prompt_chars=1000000,
     ),
     "mrcr_v2_8needle_4k_8k": MRCRBenchmark(
         key="mrcr_v2_8needle_4k_8k",
@@ -1679,30 +1724,6 @@ SUPPORTED_BENCHMARKS: Dict[str, DatasetBenchmark] = {
         min_chars=65536,
         max_chars=131072,
     ),
-    "mrcr_v2_8needle_128k_256k": MRCRBenchmark(
-        key="mrcr_v2_8needle_128k_256k",
-        display_name="OpenAI MRCR v2 8-needle 128K-256K",
-        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 128K-256K contexts.",
-        n_needles=8,
-        min_chars=131072,
-        max_chars=262144,
-    ),
-    "mrcr_v2_8needle_256k_512k": MRCRBenchmark(
-        key="mrcr_v2_8needle_256k_512k",
-        display_name="OpenAI MRCR v2 8-needle 256K-512K",
-        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 256K-512K contexts.",
-        n_needles=8,
-        min_chars=262144,
-        max_chars=524288,
-    ),
-    "mrcr_v2_8needle_512k_1m": MRCRBenchmark(
-        key="mrcr_v2_8needle_512k_1m",
-        display_name="OpenAI MRCR v2 8-needle 512K-1M",
-        description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 512K-1M contexts.",
-        n_needles=8,
-        min_chars=524288,
-        max_chars=1048577,
-    ),
 }
 
 BENCHMARK_SUITES: Dict[str, Dict[str, Any]] = {
@@ -1737,26 +1758,21 @@ BENCHMARK_SUITES: Dict[str, Dict[str, Any]] = {
         "benchmarks": ["gsm8k", "math", "aime_2024", "aime_2025"],
     },
     "long_context_suite": {
-        "display_name": "Long Context Suite",
-        "description": "Public long-context retrieval and graph reasoning benchmarks aligned with frontier reporting.",
+        "display_name": "Extended Context Suite",
+        "description": "Higher-context public tasks capped to prompt sizes that still fit realistic small-model local runs.",
         "benchmarks": [
             "graphwalks_bfs_0_128k",
-            "graphwalks_bfs_256k_1m",
             "graphwalks_parents_0_128k",
-            "graphwalks_parents_256k_1m",
             "mrcr_v2_8needle_4k_8k",
             "mrcr_v2_8needle_8k_16k",
             "mrcr_v2_8needle_16k_32k",
             "mrcr_v2_8needle_32k_64k",
             "mrcr_v2_8needle_64k_128k",
-            "mrcr_v2_8needle_128k_256k",
-            "mrcr_v2_8needle_256k_512k",
-            "mrcr_v2_8needle_512k_1m",
         ],
     },
     "openai_public_suite": {
         "display_name": "OpenAI Public Suite",
-        "description": "Runnable public benchmarks that map closely to recent OpenAI benchmark disclosures.",
+        "description": "Runnable public benchmarks, trimmed to bands that make sense for small local models.",
         "benchmarks": [
             "aime_2024",
             "aime_2025",
@@ -1769,7 +1785,7 @@ BENCHMARK_SUITES: Dict[str, Dict[str, Any]] = {
     },
     "frontier_report_suite": {
         "display_name": "Frontier Report Suite",
-        "description": "Local-only subset aligned with commonly reported public frontier benchmarks.",
+        "description": "Small-model-friendly local subset inspired by commonly reported public lab benchmarks.",
         "benchmarks": [
             "gsm8k",
             "mmlu",
@@ -1789,7 +1805,7 @@ BENCHMARK_SUITES: Dict[str, Dict[str, Any]] = {
     },
     "serious_suite": {
         "display_name": "Serious Suite",
-        "description": "Broad local-only benchmark set for leaderboard-grade comparisons.",
+        "description": "Broad small-model benchmark sweep without frontier-scale context bands.",
         "benchmarks": [
             "gsm8k",
             "mmlu",
@@ -1839,34 +1855,24 @@ SUPPORTED_BENCHMARK_LABS: Dict[str, Tuple[str, ...]] = {
     "aime_2024": ("openai", "google"),
     "aime_2025": ("openai", "google"),
     "graphwalks_bfs_0_128k": ("openai",),
-    "graphwalks_bfs_256k_1m": ("openai",),
     "graphwalks_parents_0_128k": ("openai",),
-    "graphwalks_parents_256k_1m": ("openai",),
     "mrcr_v2_8needle_4k_8k": ("openai",),
     "mrcr_v2_8needle_8k_16k": ("openai",),
     "mrcr_v2_8needle_16k_32k": ("openai",),
     "mrcr_v2_8needle_32k_64k": ("openai",),
     "mrcr_v2_8needle_64k_128k": ("openai",),
-    "mrcr_v2_8needle_128k_256k": ("openai",),
-    "mrcr_v2_8needle_256k_512k": ("openai",),
-    "mrcr_v2_8needle_512k_1m": ("openai",),
 }
 
 SUPPORTED_BENCHMARK_NOTES: Dict[str, str] = {
     "aime_2024": "Public dataset adapter for the 2024 AIME competition problems.",
     "aime_2025": "Public dataset adapter for the 2025 AIME competition problems.",
     "graphwalks_bfs_0_128k": "Public OpenAI graph reasoning dataset sliced to the benchmarked prompt-length band.",
-    "graphwalks_bfs_256k_1m": "Public OpenAI graph reasoning dataset sliced to the benchmarked prompt-length band.",
     "graphwalks_parents_0_128k": "Public OpenAI graph reasoning dataset sliced to the benchmarked prompt-length band.",
-    "graphwalks_parents_256k_1m": "Public OpenAI graph reasoning dataset sliced to the benchmarked prompt-length band.",
     "mrcr_v2_8needle_4k_8k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
     "mrcr_v2_8needle_8k_16k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
     "mrcr_v2_8needle_16k_32k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
     "mrcr_v2_8needle_32k_64k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
     "mrcr_v2_8needle_64k_128k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
-    "mrcr_v2_8needle_128k_256k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
-    "mrcr_v2_8needle_256k_512k": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
-    "mrcr_v2_8needle_512k_1m": "Public OpenAI multi-round coreference retrieval dataset sliced to the benchmarked context band.",
 }
 
 
@@ -2018,6 +2024,12 @@ def expand_benchmark_selection(selection: Optional[Sequence[str]]) -> List[str]:
             expanded.extend(BENCHMARK_SUITES[key]["benchmarks"])
         elif key in SUPPORTED_BENCHMARKS:
             expanded.append(key)
+        elif key in TRACKED_BENCHMARK_CATALOG:
+            entry = TRACKED_BENCHMARK_CATALOG[key]
+            raise ValueError(
+                f"Benchmark '{item}' is tracked but not locally runnable yet "
+                f"(status: {entry.status}, harness: {entry.harness})."
+            )
         else:
             supported = ", ".join(sorted(list(SUPPORTED_BENCHMARKS) + list(BENCHMARK_SUITES)))
             raise ValueError(f"Unknown benchmark or suite '{item}'. Supported names: {supported}")

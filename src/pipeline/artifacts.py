@@ -5,13 +5,15 @@ Structured artifact storage for local benchmark runs.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 import platform
-import socket
+
+from src.pipeline.config import ARTIFACT_SCHEMA_VERSION, DEFAULT_ARTIFACTS_DIR
 
 
 def utcnow_iso() -> str:
@@ -36,6 +38,48 @@ def _run_command(args: List[str]) -> str:
     return result.stdout.strip()
 
 
+def portable_path(value: str | Path) -> str:
+    """Return a path string without embedding user-specific absolute locations."""
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        return candidate.as_posix()
+
+    try:
+        resolved = candidate.resolve(strict=False)
+    except Exception:
+        resolved = candidate
+
+    cwd = Path.cwd().resolve()
+    try:
+        return resolved.relative_to(cwd).as_posix()
+    except ValueError:
+        pass
+
+    try:
+        relative = os.path.relpath(resolved, cwd)
+        if relative and relative != ".":
+            return Path(relative).as_posix()
+    except ValueError:
+        pass
+
+    home = Path.home().resolve()
+    try:
+        return (Path("~") / resolved.relative_to(home)).as_posix()
+    except ValueError:
+        pass
+
+    filtered_parts = [part for part in resolved.parts if part not in {"", resolved.anchor, os.sep}]
+    tail = filtered_parts[-3:] if filtered_parts else [resolved.name or "path"]
+    return Path("<external>", *tail).as_posix()
+
+
+def sanitize_system_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop host-identifying fields from persisted system metadata."""
+    sanitized = dict(metadata)
+    sanitized.pop("hostname", None)
+    return sanitized
+
+
 @dataclass
 class RunPaths:
     """Filesystem locations for a benchmark run."""
@@ -51,7 +95,7 @@ class RunPaths:
 class ArtifactStore:
     """Write and load structured benchmark artifacts."""
 
-    def __init__(self, base_dir: str = "artifacts"):
+    def __init__(self, base_dir: str = DEFAULT_ARTIFACTS_DIR):
         self.base_dir = Path(base_dir)
         self.runs_dir = self.base_dir / "runs"
         self.runs_dir.mkdir(parents=True, exist_ok=True)
@@ -72,7 +116,7 @@ class ArtifactStore:
         manifest = dict(manifest)
         manifest["run_id"] = run_id
         manifest["created_at"] = created_at
-        manifest["schema_version"] = "2.0"
+        manifest["schema_version"] = ARTIFACT_SCHEMA_VERSION
 
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, indent=2)
@@ -157,11 +201,11 @@ class ArtifactStore:
 
         return {
             "run_id": run_id,
-            "run_dir": str(run_dir),
+            "run_dir": portable_path(run_dir),
             "manifest": manifest,
             "summary": summary,
             "benchmark_results": benchmark_results,
-            "sample_files": sample_files,
+            "sample_files": [portable_path(file_path) for file_path in sample_files],
         }
 
     def _write_latest_run_id(self, run_id: str) -> None:
@@ -177,9 +221,8 @@ class ArtifactStore:
 
 
 def collect_system_metadata() -> Dict[str, Any]:
-    """Collect system metadata for reproducible benchmark runs."""
+    """Collect non-identifying system metadata for reproducible benchmark runs."""
     metadata = {
-        "hostname": socket.gethostname(),
         "platform": platform.system(),
         "platform_release": platform.release(),
         "platform_version": platform.version(),
@@ -209,7 +252,7 @@ def collect_system_metadata() -> Dict[str, Any]:
             }
         )
 
-    return metadata
+    return sanitize_system_metadata(metadata)
 
 
 def collect_repository_metadata(repo_root: str = ".") -> Dict[str, Any]:

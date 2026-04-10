@@ -34,6 +34,8 @@ local_benchmarks:
   artifacts_dir: "artifacts"
   website_export_dir: "website_exports"
   website_sync_dir: "../websmaLLMs/public/data"
+  dataset_cache_dir: null  # Defaults to a per-user cache outside the repo
+  allow_remote_dataset_downloads: true  # Set false after warming the cache for offline runs
   default_provider: "ollama"
   default_samples: 10
   default_temperature: 0.0

@@ -1,11 +1,16 @@
 # smaLLMs
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![CLI Only](https://img.shields.io/badge/interface-terminal-black)](https://github.com/mmdmcy/smaLLMs)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![CLI First](https://img.shields.io/badge/interface-cli--first-black)](https://github.com/mmdmcy/smaLLMs)
 [![Local First](https://img.shields.io/badge/runtime-local%20first-green)](https://github.com/mmdmcy/smaLLMs)
 
-CLI-only local LLM benchmarking with supported benchmark suites, live terminal progress, and structured artifacts for local leaderboards.
+CLI-first local LLM benchmarking with supported benchmark suites, live terminal progress, and structured artifacts for local leaderboards.
+
+This repo is opinionated about scope:
+- it is built for small local language models
+- supported benchmarks are limited to tasks and context bands that make sense for those models
+- frontier-scale context bands that do not fit realistic small-model local runs are intentionally not supported
 
 smaLLMs is built for:
 - local models running through Ollama or LM Studio
@@ -18,6 +23,8 @@ Important distinction:
 - benchmark datasets download automatically through the Hugging Face `datasets` ecosystem on first use
 - after that, smaLLMs reuses the local cache automatically
 - benchmark rows are cached outside the repo in a per-user cache directory, so the git repo itself stays small
+- generated benchmark artifacts and website export bundles are local outputs and stay gitignored by default
+- exported metadata avoids hostnames and other user-specific absolute path details
 
 ## What smaLLMs is trying to be
 
@@ -63,17 +70,12 @@ These benchmarks are supported by the local runner today:
 - `truthfulqa_mc1`
 - `bbh_boolean_expressions`
 - `graphwalks_bfs_0_128k`
-- `graphwalks_bfs_256k_1m`
 - `graphwalks_parents_0_128k`
-- `graphwalks_parents_256k_1m`
 - `mrcr_v2_8needle_4k_8k`
 - `mrcr_v2_8needle_8k_16k`
 - `mrcr_v2_8needle_16k_32k`
 - `mrcr_v2_8needle_32k_64k`
 - `mrcr_v2_8needle_64k_128k`
-- `mrcr_v2_8needle_128k_256k`
-- `mrcr_v2_8needle_256k_512k`
-- `mrcr_v2_8needle_512k_1m`
 
 ## Quick start
 
@@ -218,6 +220,8 @@ python3 run_local_benchmarks.py export --sync-dir /path/to/websmaLLMs/public/dat
 
 ## Benchmark suites
 
+The suite catalog follows the same rule as the benchmark list: higher-context tasks are allowed only up to bands that are still realistic for small local models. Frontier-scale 256K-1M character bands are intentionally excluded.
+
 Runnable suites currently include:
 
 - `quick_suite`
@@ -232,7 +236,7 @@ Runnable suites currently include:
 ## Project principles
 
 - Local-first: evaluate models on the user’s own hardware.
-- CLI-only: the terminal is the primary product surface.
+- CLI-first: the terminal is the primary maintained product surface.
 - Supported means runnable now.
 - Open artifacts: every run should be exportable and inspectable.
 - Cross-platform pragmatism: no platform should be treated as second-class.
@@ -251,3 +255,11 @@ Runnable suites currently include:
 - add dedicated harnesses for code and tool-use benchmarks
 - improve benchmark normalization and run metadata for publishable leaderboard workflows
 - keep the terminal experience first-class instead of bolting on a web UI
+
+## Development
+
+Run the unit tests with:
+
+```bash
+python -m unittest discover -s tests -q
+```

@@ -46,8 +46,14 @@ Thumbs.db
 
 # Project specific
 smaLLMs_results/
+intelligent_results/
+results/
 artifacts/
 website_exports/
+data/
+public/data/
+comprehensive_results_report.txt
+smaLLMs_results_export_*
 *.log
 .cache/
 temp/
@@ -69,5 +75,3 @@ htmlcov/
 
 # Documentation
 docs/_build/
-*.json
-*.md

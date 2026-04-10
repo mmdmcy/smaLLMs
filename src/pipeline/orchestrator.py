@@ -6,10 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-
-import yaml
 
 from src.models.model_manager import ModelInfo, ModelManager
 from src.pipeline.artifacts import (
@@ -17,7 +14,7 @@ from src.pipeline.artifacts import (
     RunPaths,
     collect_repository_metadata,
     collect_system_metadata,
-    safe_slug,
+    portable_path,
     utcnow_iso,
 )
 from src.pipeline.benchmarks import (
@@ -29,54 +26,23 @@ from src.pipeline.benchmarks import (
     list_benchmark_suites,
     list_supported_benchmarks,
 )
+from src.pipeline.config import (
+    ARTIFACT_SCHEMA_VERSION,
+    DEFAULT_ARTIFACTS_DIR,
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_EXPORT_AFTER_RUN,
+    DEFAULT_LOCAL_PROVIDER,
+    DEFAULT_LOCAL_SAMPLE_COUNT,
+    DEFAULT_LOCAL_TEMPERATURE,
+    DEFAULT_WEBSITE_EXPORT_DIR,
+    load_pipeline_config,
+    local_benchmark_settings,
+)
 
 
 LOGGER = logging.getLogger(__name__)
 
 ProgressCallback = Optional[Callable[[Dict[str, Any]], None]]
-
-
-DEFAULT_CONFIG: Dict[str, Any] = {
-    "evaluation_mode": {
-        "default": "local",
-        "prefer_local": True,
-        "auto_discover_models": True,
-        "include_vision_models": False,
-    },
-    "local_benchmarks": {
-        "artifacts_dir": "artifacts",
-        "website_export_dir": "website_exports",
-        "website_sync_dir": "../websmaLLMs/public/data",
-        "dataset_cache_dir": None,
-        "allow_remote_dataset_downloads": True,
-        "default_provider": "ollama",
-        "default_samples": 25,
-        "default_temperature": 0.0,
-        "default_benchmarks": DEFAULT_BENCHMARKS,
-        "export_after_run": True,
-    },
-}
-
-
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """Recursively merge config dictionaries."""
-    merged = dict(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
-
-
-def _load_config(config_path: str) -> Dict[str, Any]:
-    """Load YAML config with defaults."""
-    path = Path(config_path)
-    if not path.exists():
-        return DEFAULT_CONFIG
-    with open(path, "r", encoding="utf-8") as handle:
-        loaded = yaml.safe_load(handle) or {}
-    return _deep_merge(DEFAULT_CONFIG, loaded)
 
 
 def _model_info_to_dict(info: ModelInfo) -> Dict[str, Any]:
@@ -99,13 +65,13 @@ def _model_info_to_dict(info: ModelInfo) -> Dict[str, Any]:
 class LocalBenchmarkOrchestrator:
     """Run supported local benchmarks and persist structured artifacts."""
 
-    def __init__(self, config_path: str = "config/config.yaml"):
+    def __init__(self, config_path: str = DEFAULT_CONFIG_PATH):
         self.config_path = config_path
-        self.config = _load_config(config_path)
-        configure_dataset_runtime(self.config.get("local_benchmarks", {}))
+        self.config = load_pipeline_config(config_path, DEFAULT_BENCHMARKS)
+        self.local_settings = local_benchmark_settings(self.config, DEFAULT_BENCHMARKS)
+        configure_dataset_runtime(self.local_settings)
         self.model_manager = ModelManager(self.config)
-        artifacts_dir = self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts")
-        self.artifact_store = ArtifactStore(artifacts_dir)
+        self.artifact_store = ArtifactStore(self.local_settings.get("artifacts_dir", DEFAULT_ARTIFACTS_DIR))
 
     async def discover_local_models(self) -> Dict[str, List[Dict[str, Any]]]:
         """Discover locally available models."""
@@ -121,7 +87,7 @@ class LocalBenchmarkOrchestrator:
         if models:
             return models
 
-        provider = provider or self.config.get("local_benchmarks", {}).get("default_provider", "ollama")
+        provider = provider or self.local_settings.get("default_provider", DEFAULT_LOCAL_PROVIDER)
         discovered = await self.discover_local_models()
 
         if all_local:
@@ -140,14 +106,14 @@ class LocalBenchmarkOrchestrator:
         progress_callback: ProgressCallback = None,
     ) -> Dict[str, Any]:
         """Run local benchmarks and optionally export the latest website bundle."""
-        requested_benchmarks = benchmarks or list(
-            self.config.get("local_benchmarks", {}).get("default_benchmarks", DEFAULT_BENCHMARKS)
-        )
+        requested_benchmarks = benchmarks or list(self.local_settings.get("default_benchmarks", DEFAULT_BENCHMARKS))
         benchmark_names = expand_benchmark_selection(requested_benchmarks)
-        sample_count = samples or int(self.config.get("local_benchmarks", {}).get("default_samples", 25))
-        temperature = float(self.config.get("local_benchmarks", {}).get("default_temperature", 0.0))
+        sample_count = samples if samples is not None else int(
+            self.local_settings.get("default_samples", DEFAULT_LOCAL_SAMPLE_COUNT)
+        )
+        temperature = float(self.local_settings.get("default_temperature", DEFAULT_LOCAL_TEMPERATURE))
         export_after_run = (
-            self.config.get("local_benchmarks", {}).get("export_after_run", True)
+            bool(self.local_settings.get("export_after_run", DEFAULT_EXPORT_AFTER_RUN))
             if export_after_run is None
             else export_after_run
         )
@@ -209,9 +175,9 @@ class LocalBenchmarkOrchestrator:
             from src.pipeline.exporter import WebsiteExporter
 
             exporter = WebsiteExporter(
-                artifacts_dir=self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts"),
-                output_dir=self.config.get("local_benchmarks", {}).get("website_export_dir", "website_exports"),
-                sync_dir=self.config.get("local_benchmarks", {}).get("website_sync_dir"),
+                artifacts_dir=self.local_settings.get("artifacts_dir", DEFAULT_ARTIFACTS_DIR),
+                output_dir=self.local_settings.get("website_export_dir", DEFAULT_WEBSITE_EXPORT_DIR),
+                sync_dir=self.local_settings.get("website_sync_dir"),
             )
             exporter.export_run(paths.run_id)
 
@@ -243,15 +209,15 @@ class LocalBenchmarkOrchestrator:
             benchmark_result = execution.benchmark_result
             sample_file = self.artifact_store.write_sample_results(paths, benchmark_name, model_name, execution.samples)
             benchmark_result["artifact_paths"] = {
-                "samples_jsonl": str(sample_file),
+                "samples_jsonl": portable_path(sample_file),
             }
             benchmark_file = self.artifact_store.write_benchmark_result(paths, benchmark_name, model_name, benchmark_result)
-            benchmark_result["artifact_paths"]["benchmark_json"] = str(benchmark_file)
+            benchmark_result["artifact_paths"]["benchmark_json"] = portable_path(benchmark_file)
             self.artifact_store.write_benchmark_result(paths, benchmark_name, model_name, benchmark_result)
             return benchmark_result
         except Exception as exc:
             failure = {
-                "schema_version": "2.0",
+                "schema_version": ARTIFACT_SCHEMA_VERSION,
                 "run_id": paths.run_id,
                 "benchmark_name": benchmark_name,
                 "benchmark_display_name": benchmark.display_name,
@@ -267,19 +233,28 @@ class LocalBenchmarkOrchestrator:
                     "success_rate": 0.0,
                     "responded_count": 0,
                     "response_rate": 0.0,
+                    "raw_fallback_count": 0,
+                    "raw_fallback_rate": 0.0,
+                    "raw_fallback_attempted_count": 0,
+                    "raw_fallback_attempted_rate": 0.0,
                     "error_count": 1,
+                    "total_latency_sec": 0.0,
                     "avg_latency_sec": 0.0,
                     "max_latency_sec": 0.0,
                     "min_latency_sec": 0.0,
+                    "total_load_duration_sec": 0.0,
                     "avg_load_duration_sec": 0.0,
                     "max_load_duration_sec": 0.0,
                     "min_load_duration_sec": 0.0,
+                    "total_prompt_eval_duration_sec": 0.0,
                     "avg_prompt_eval_duration_sec": 0.0,
                     "max_prompt_eval_duration_sec": 0.0,
                     "min_prompt_eval_duration_sec": 0.0,
+                    "total_eval_duration_sec": 0.0,
                     "avg_eval_duration_sec": 0.0,
                     "max_eval_duration_sec": 0.0,
                     "min_eval_duration_sec": 0.0,
+                    "total_total_duration_sec": 0.0,
                     "avg_total_duration_sec": 0.0,
                     "max_total_duration_sec": 0.0,
                     "min_total_duration_sec": 0.0,
@@ -303,9 +278,18 @@ class LocalBenchmarkOrchestrator:
                     "avg_response_chars": 0.0,
                     "avg_expected_answer_chars": 0.0,
                     "avg_parsed_prediction_chars": 0.0,
+                    "overall_tokens_per_second": 0.0,
                     "avg_tokens_per_second": 0.0,
                     "max_tokens_per_second": 0.0,
                     "min_tokens_per_second": 0.0,
+                    "overall_eval_tokens_per_second": 0.0,
+                    "avg_eval_tokens_per_second": 0.0,
+                    "max_eval_tokens_per_second": 0.0,
+                    "min_eval_tokens_per_second": 0.0,
+                    "overall_prompt_tokens_per_second": 0.0,
+                    "avg_prompt_tokens_per_second": 0.0,
+                    "max_prompt_tokens_per_second": 0.0,
+                    "min_prompt_tokens_per_second": 0.0,
                     "local_cost_estimate": 0.0,
                 },
             }
@@ -320,7 +304,7 @@ class LocalBenchmarkOrchestrator:
                     }
                 )
             failure_file = self.artifact_store.write_benchmark_result(paths, benchmark_name, model_name, failure)
-            failure["artifact_paths"] = {"benchmark_json": str(failure_file)}
+            failure["artifact_paths"] = {"benchmark_json": portable_path(failure_file)}
             self.artifact_store.write_benchmark_result(paths, benchmark_name, model_name, failure)
             return failure
         finally:
@@ -336,33 +320,53 @@ class LocalBenchmarkOrchestrator:
         total_errors = 0
         total_success = 0
         total_responded = 0
+        total_raw_fallback_count = 0
+        total_raw_fallback_attempted_count = 0
         total_prompt_tokens = 0
         total_completion_tokens = 0
         total_tokens = 0
-        total_duration = 0.0
+        total_latency_sec = 0.0
         total_load_duration = 0.0
         total_prompt_eval_duration = 0.0
         total_eval_duration = 0.0
+        total_provider_duration = 0.0
         total_prompt_chars = 0
         total_response_chars = 0
 
         for result in completed:
             metrics = result.get("metrics", {})
             model_name = result["model"]["name"]
+            sample_count = int(metrics.get("sample_count", 0))
+            evaluation_total_latency = float(metrics.get("total_latency_sec", 0.0)) or (
+                float(metrics.get("avg_latency_sec", 0.0)) * sample_count
+            )
+            evaluation_total_load_duration = float(metrics.get("total_load_duration_sec", 0.0)) or (
+                float(metrics.get("avg_load_duration_sec", 0.0)) * sample_count
+            )
+            evaluation_total_prompt_eval_duration = float(metrics.get("total_prompt_eval_duration_sec", 0.0)) or (
+                float(metrics.get("avg_prompt_eval_duration_sec", 0.0)) * sample_count
+            )
+            evaluation_total_eval_duration = float(metrics.get("total_eval_duration_sec", 0.0)) or (
+                float(metrics.get("avg_eval_duration_sec", 0.0)) * sample_count
+            )
+            evaluation_total_provider_duration = float(metrics.get("total_total_duration_sec", 0.0)) or (
+                float(metrics.get("avg_total_duration_sec", 0.0)) * sample_count
+            )
             total_samples += int(metrics.get("sample_count", 0))
             total_correct += int(metrics.get("correct_count", 0))
             total_errors += int(metrics.get("error_count", 0))
             total_success += int(metrics.get("success_count", 0))
             total_responded += int(metrics.get("responded_count", 0))
+            total_raw_fallback_count += int(metrics.get("raw_fallback_count", 0))
+            total_raw_fallback_attempted_count += int(metrics.get("raw_fallback_attempted_count", 0))
             total_prompt_tokens += int(metrics.get("total_prompt_tokens", 0))
             total_completion_tokens += int(metrics.get("total_completion_tokens", 0))
             total_tokens += int(metrics.get("total_tokens", 0))
-            total_duration += float(metrics.get("avg_latency_sec", 0.0)) * int(metrics.get("sample_count", 0))
-            total_load_duration += float(metrics.get("avg_load_duration_sec", 0.0)) * int(metrics.get("sample_count", 0))
-            total_prompt_eval_duration += float(metrics.get("avg_prompt_eval_duration_sec", 0.0)) * int(
-                metrics.get("sample_count", 0)
-            )
-            total_eval_duration += float(metrics.get("avg_eval_duration_sec", 0.0)) * int(metrics.get("sample_count", 0))
+            total_latency_sec += evaluation_total_latency
+            total_load_duration += evaluation_total_load_duration
+            total_prompt_eval_duration += evaluation_total_prompt_eval_duration
+            total_eval_duration += evaluation_total_eval_duration
+            total_provider_duration += evaluation_total_provider_duration
             total_prompt_chars += int(metrics.get("total_prompt_chars", 0))
             total_response_chars += int(metrics.get("total_response_chars", 0))
 
@@ -385,18 +389,23 @@ class LocalBenchmarkOrchestrator:
                     "error_count": 0,
                     "success_count": 0,
                     "responded_count": 0,
+                    "raw_fallback_count": 0,
+                    "raw_fallback_attempted_count": 0,
                     "total_prompt_tokens": 0,
                     "total_completion_tokens": 0,
                     "total_tokens": 0,
-                    "total_duration_sec": 0.0,
+                    "total_latency_sec": 0.0,
                     "total_load_duration_sec": 0.0,
                     "total_prompt_eval_duration_sec": 0.0,
                     "total_eval_duration_sec": 0.0,
+                    "total_total_duration_sec": 0.0,
                     "total_prompt_chars": 0,
                     "total_response_chars": 0,
                     "total_expected_answer_chars": 0,
                     "total_parsed_prediction_chars": 0,
                     "tokens_per_second_weighted_sum": 0.0,
+                    "eval_tokens_per_second_weighted_sum": 0.0,
+                    "prompt_tokens_per_second_weighted_sum": 0.0,
                 }
 
             entry = leaderboard[model_name]
@@ -406,12 +415,21 @@ class LocalBenchmarkOrchestrator:
                 "correct_count": metrics.get("correct_count", 0),
                 "success_count": metrics.get("success_count", 0),
                 "responded_count": metrics.get("responded_count", 0),
+                "raw_fallback_count": metrics.get("raw_fallback_count", 0),
+                "raw_fallback_rate": metrics.get("raw_fallback_rate", 0.0),
+                "raw_fallback_attempted_count": metrics.get("raw_fallback_attempted_count", 0),
+                "raw_fallback_attempted_rate": metrics.get("raw_fallback_attempted_rate", 0.0),
+                "total_latency_sec": metrics.get("total_latency_sec", 0.0),
                 "avg_latency_sec": metrics.get("avg_latency_sec", 0.0),
                 "max_latency_sec": metrics.get("max_latency_sec", 0.0),
                 "min_latency_sec": metrics.get("min_latency_sec", 0.0),
+                "total_load_duration_sec": metrics.get("total_load_duration_sec", 0.0),
                 "avg_load_duration_sec": metrics.get("avg_load_duration_sec", 0.0),
+                "total_prompt_eval_duration_sec": metrics.get("total_prompt_eval_duration_sec", 0.0),
                 "avg_prompt_eval_duration_sec": metrics.get("avg_prompt_eval_duration_sec", 0.0),
+                "total_eval_duration_sec": metrics.get("total_eval_duration_sec", 0.0),
                 "avg_eval_duration_sec": metrics.get("avg_eval_duration_sec", 0.0),
+                "total_total_duration_sec": metrics.get("total_total_duration_sec", 0.0),
                 "avg_total_duration_sec": metrics.get("avg_total_duration_sec", 0.0),
                 "total_prompt_tokens": metrics.get("total_prompt_tokens", 0),
                 "total_completion_tokens": metrics.get("total_completion_tokens", 0),
@@ -421,9 +439,18 @@ class LocalBenchmarkOrchestrator:
                 "avg_total_tokens": metrics.get("avg_total_tokens", 0.0),
                 "success_rate": metrics.get("success_rate", 0.0),
                 "response_rate": metrics.get("response_rate", 0.0),
+                "overall_tokens_per_second": metrics.get("overall_tokens_per_second", 0.0),
                 "avg_tokens_per_second": metrics.get("avg_tokens_per_second", 0.0),
                 "max_tokens_per_second": metrics.get("max_tokens_per_second", 0.0),
                 "min_tokens_per_second": metrics.get("min_tokens_per_second", 0.0),
+                "overall_eval_tokens_per_second": metrics.get("overall_eval_tokens_per_second", 0.0),
+                "avg_eval_tokens_per_second": metrics.get("avg_eval_tokens_per_second", 0.0),
+                "max_eval_tokens_per_second": metrics.get("max_eval_tokens_per_second", 0.0),
+                "min_eval_tokens_per_second": metrics.get("min_eval_tokens_per_second", 0.0),
+                "overall_prompt_tokens_per_second": metrics.get("overall_prompt_tokens_per_second", 0.0),
+                "avg_prompt_tokens_per_second": metrics.get("avg_prompt_tokens_per_second", 0.0),
+                "max_prompt_tokens_per_second": metrics.get("max_prompt_tokens_per_second", 0.0),
+                "min_prompt_tokens_per_second": metrics.get("min_prompt_tokens_per_second", 0.0),
                 "total_prompt_chars": metrics.get("total_prompt_chars", 0),
                 "total_response_chars": metrics.get("total_response_chars", 0),
                 "avg_prompt_chars": metrics.get("avg_prompt_chars", 0.0),
@@ -434,13 +461,16 @@ class LocalBenchmarkOrchestrator:
             entry["error_count"] += int(metrics.get("error_count", 0))
             entry["success_count"] += int(metrics.get("success_count", 0))
             entry["responded_count"] += int(metrics.get("responded_count", 0))
+            entry["raw_fallback_count"] += int(metrics.get("raw_fallback_count", 0))
+            entry["raw_fallback_attempted_count"] += int(metrics.get("raw_fallback_attempted_count", 0))
             entry["total_prompt_tokens"] += int(metrics.get("total_prompt_tokens", 0))
             entry["total_completion_tokens"] += int(metrics.get("total_completion_tokens", 0))
             entry["total_tokens"] += int(metrics.get("total_tokens", 0))
-            entry["total_duration_sec"] += float(metrics.get("avg_latency_sec", 0.0)) * int(metrics.get("sample_count", 0))
-            entry["total_load_duration_sec"] += float(metrics.get("avg_load_duration_sec", 0.0)) * int(metrics.get("sample_count", 0))
-            entry["total_prompt_eval_duration_sec"] += float(metrics.get("avg_prompt_eval_duration_sec", 0.0)) * int(metrics.get("sample_count", 0))
-            entry["total_eval_duration_sec"] += float(metrics.get("avg_eval_duration_sec", 0.0)) * int(metrics.get("sample_count", 0))
+            entry["total_latency_sec"] += evaluation_total_latency
+            entry["total_load_duration_sec"] += evaluation_total_load_duration
+            entry["total_prompt_eval_duration_sec"] += evaluation_total_prompt_eval_duration
+            entry["total_eval_duration_sec"] += evaluation_total_eval_duration
+            entry["total_total_duration_sec"] += evaluation_total_provider_duration
             entry["total_prompt_chars"] += int(metrics.get("total_prompt_chars", 0))
             entry["total_response_chars"] += int(metrics.get("total_response_chars", 0))
             entry["total_expected_answer_chars"] += int(metrics.get("total_expected_answer_chars", 0))
@@ -448,12 +478,18 @@ class LocalBenchmarkOrchestrator:
             entry["tokens_per_second_weighted_sum"] += float(metrics.get("avg_tokens_per_second", 0.0)) * int(
                 metrics.get("sample_count", 0)
             )
+            entry["eval_tokens_per_second_weighted_sum"] += float(metrics.get("avg_eval_tokens_per_second", 0.0)) * int(
+                metrics.get("sample_count", 0)
+            )
+            entry["prompt_tokens_per_second_weighted_sum"] += float(
+                metrics.get("avg_prompt_tokens_per_second", 0.0)
+            ) * int(metrics.get("sample_count", 0))
 
         leaderboard_rows: List[Dict[str, Any]] = []
         for entry in leaderboard.values():
             total_samples_for_model = entry["total_samples"]
             overall_accuracy = entry["correct_count"] / total_samples_for_model if total_samples_for_model else 0.0
-            avg_latency_sec = entry["total_duration_sec"] / total_samples_for_model if total_samples_for_model else 0.0
+            avg_latency_sec = entry["total_latency_sec"] / total_samples_for_model if total_samples_for_model else 0.0
             row = {
                 "model_name": entry["model_name"],
                 "provider": entry["provider"],
@@ -475,6 +511,15 @@ class LocalBenchmarkOrchestrator:
                 "error_count": entry["error_count"],
                 "success_count": entry["success_count"],
                 "responded_count": entry["responded_count"],
+                "raw_fallback_count": entry["raw_fallback_count"],
+                "raw_fallback_rate": round(entry["raw_fallback_count"] / total_samples_for_model, 4)
+                if total_samples_for_model
+                else 0.0,
+                "raw_fallback_attempted_count": entry["raw_fallback_attempted_count"],
+                "raw_fallback_attempted_rate": round(entry["raw_fallback_attempted_count"] / total_samples_for_model, 4)
+                if total_samples_for_model
+                else 0.0,
+                "total_latency_sec": round(entry["total_latency_sec"], 4),
                 "avg_latency_sec": round(avg_latency_sec, 4),
                 "avg_load_duration_sec": round(entry["total_load_duration_sec"] / total_samples_for_model, 4)
                 if total_samples_for_model
@@ -487,11 +532,39 @@ class LocalBenchmarkOrchestrator:
                 "avg_eval_duration_sec": round(entry["total_eval_duration_sec"] / total_samples_for_model, 4)
                 if total_samples_for_model
                 else 0.0,
+                "avg_total_duration_sec": round(entry["total_total_duration_sec"] / total_samples_for_model, 4)
+                if total_samples_for_model
+                else 0.0,
                 "total_prompt_tokens": entry["total_prompt_tokens"],
                 "total_completion_tokens": entry["total_completion_tokens"],
                 "total_tokens": entry["total_tokens"],
+                "overall_tokens_per_second": round(
+                    entry["total_completion_tokens"] / entry["total_latency_sec"], 4
+                )
+                if entry["total_latency_sec"] > 0
+                else 0.0,
                 "avg_tokens_per_second": round(
                     entry["tokens_per_second_weighted_sum"] / total_samples_for_model, 4
+                )
+                if total_samples_for_model
+                else 0.0,
+                "overall_eval_tokens_per_second": round(
+                    entry["total_completion_tokens"] / entry["total_eval_duration_sec"], 4
+                )
+                if entry["total_eval_duration_sec"] > 0
+                else 0.0,
+                "avg_eval_tokens_per_second": round(
+                    entry["eval_tokens_per_second_weighted_sum"] / total_samples_for_model, 4
+                )
+                if total_samples_for_model
+                else 0.0,
+                "overall_prompt_tokens_per_second": round(
+                    entry["total_prompt_tokens"] / entry["total_prompt_eval_duration_sec"], 4
+                )
+                if entry["total_prompt_eval_duration_sec"] > 0
+                else 0.0,
+                "avg_prompt_tokens_per_second": round(
+                    entry["prompt_tokens_per_second_weighted_sum"] / total_samples_for_model, 4
                 )
                 if total_samples_for_model
                 else 0.0,
@@ -508,10 +581,10 @@ class LocalBenchmarkOrchestrator:
             row["rank"] = index
 
         return {
-            "schema_version": "2.0",
+            "schema_version": ARTIFACT_SCHEMA_VERSION,
             "run_id": paths.run_id,
             "generated_at": utcnow_iso(),
-            "manifest_path": str(paths.manifest_path),
+            "manifest_path": portable_path(paths.manifest_path),
             "totals": {
                 "models": len({result["model"]["name"] for result in benchmark_results}),
                 "benchmarks": len({result["benchmark_name"] for result in benchmark_results}),
@@ -525,17 +598,37 @@ class LocalBenchmarkOrchestrator:
                 "success_rate": round(total_success / total_samples, 4) if total_samples else 0.0,
                 "responded": total_responded,
                 "response_rate": round(total_responded / total_samples, 4) if total_samples else 0.0,
+                "raw_fallback_count": total_raw_fallback_count,
+                "raw_fallback_rate": round(total_raw_fallback_count / total_samples, 4) if total_samples else 0.0,
+                "raw_fallback_attempted_count": total_raw_fallback_attempted_count,
+                "raw_fallback_attempted_rate": round(total_raw_fallback_attempted_count / total_samples, 4)
+                if total_samples
+                else 0.0,
                 "errors": total_errors,
                 "total_prompt_tokens": total_prompt_tokens,
                 "total_completion_tokens": total_completion_tokens,
                 "total_tokens": total_tokens,
-                "avg_latency_sec": round(total_duration / total_samples, 4) if total_samples else 0.0,
-                "total_duration_sec": round(total_duration, 4),
+                "avg_latency_sec": round(total_latency_sec / total_samples, 4) if total_samples else 0.0,
+                "total_latency_sec": round(total_latency_sec, 4),
+                "total_duration_sec": round(total_latency_sec, 4),
                 "avg_load_duration_sec": round(total_load_duration / total_samples, 4) if total_samples else 0.0,
                 "avg_prompt_eval_duration_sec": round(total_prompt_eval_duration / total_samples, 4)
                 if total_samples
                 else 0.0,
                 "avg_eval_duration_sec": round(total_eval_duration / total_samples, 4) if total_samples else 0.0,
+                "total_load_duration_sec": round(total_load_duration, 4),
+                "total_prompt_eval_duration_sec": round(total_prompt_eval_duration, 4),
+                "total_eval_duration_sec": round(total_eval_duration, 4),
+                "total_provider_duration_sec": round(total_provider_duration, 4),
+                "overall_tokens_per_second": round(total_completion_tokens / total_latency_sec, 4)
+                if total_latency_sec > 0
+                else 0.0,
+                "overall_eval_tokens_per_second": round(total_completion_tokens / total_eval_duration, 4)
+                if total_eval_duration > 0
+                else 0.0,
+                "overall_prompt_tokens_per_second": round(total_prompt_tokens / total_prompt_eval_duration, 4)
+                if total_prompt_eval_duration > 0
+                else 0.0,
                 "total_prompt_chars": total_prompt_chars,
                 "total_response_chars": total_response_chars,
             },
@@ -546,5 +639,5 @@ class LocalBenchmarkOrchestrator:
 
 def run_local_benchmarks_sync(**kwargs: Any) -> Dict[str, Any]:
     """Synchronous helper for CLI entrypoints."""
-    orchestrator = LocalBenchmarkOrchestrator(config_path=kwargs.pop("config_path", "config/config.yaml"))
+    orchestrator = LocalBenchmarkOrchestrator(config_path=kwargs.pop("config_path", DEFAULT_CONFIG_PATH))
     return asyncio.run(orchestrator.run(**kwargs))

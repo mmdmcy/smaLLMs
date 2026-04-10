@@ -77,6 +77,10 @@ class GenerationResult:
     eval_duration_sec: float = 0.0
     total_duration_sec: float = 0.0
     tokens_per_second: float = 0.0
+    eval_tokens_per_second: float = 0.0
+    prompt_tokens_per_second: float = 0.0
+    used_raw_fallback: bool = False
+    raw_fallback_attempted: bool = False
     raw: Optional[Dict[str, Any]] = None
 
 
@@ -581,6 +585,56 @@ class OllamaModel(BaseModel):
         except (TypeError, ValueError):
             return 0.0
 
+    def _metric_int(self, value: Any) -> int:
+        """Convert provider counters and durations to integers safely."""
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _normalized_total_duration_ns(self, result: Dict[str, Any]) -> int:
+        """Return a total duration, falling back to the sum of known phases."""
+        reported_total = self._metric_int(result.get("total_duration"))
+        if reported_total > 0:
+            return reported_total
+
+        return (
+            self._metric_int(result.get("load_duration"))
+            + self._metric_int(result.get("prompt_eval_duration"))
+            + self._metric_int(result.get("eval_duration"))
+        )
+
+    def _snapshot_attempt_metrics(self, result: Dict[str, Any], transport: str, raw_mode: bool) -> Dict[str, Any]:
+        """Capture a compact per-attempt metric snapshot for debugging and aggregation."""
+        return {
+            "transport": transport,
+            "raw_mode": raw_mode,
+            "error": result.get("error"),
+            "response_chars": len(str(result.get("response") or "")),
+            "thinking_chars": len(str(result.get("thinking") or "")),
+            "prompt_eval_count": self._metric_int(result.get("prompt_eval_count")),
+            "eval_count": self._metric_int(result.get("eval_count")),
+            "load_duration": self._metric_int(result.get("load_duration")),
+            "prompt_eval_duration": self._metric_int(result.get("prompt_eval_duration")),
+            "eval_duration": self._metric_int(result.get("eval_duration")),
+            "total_duration": self._normalized_total_duration_ns(result),
+        }
+
+    def _aggregate_attempt_metrics(self, attempts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Aggregate per-attempt Ollama metrics into total work done for one sample."""
+        if not attempts:
+            return {}
+
+        return {
+            "attempt_count": len(attempts),
+            "prompt_eval_count": sum(self._metric_int(attempt.get("prompt_eval_count")) for attempt in attempts),
+            "eval_count": sum(self._metric_int(attempt.get("eval_count")) for attempt in attempts),
+            "load_duration": sum(self._metric_int(attempt.get("load_duration")) for attempt in attempts),
+            "prompt_eval_duration": sum(self._metric_int(attempt.get("prompt_eval_duration")) for attempt in attempts),
+            "eval_duration": sum(self._metric_int(attempt.get("eval_duration")) for attempt in attempts),
+            "total_duration": sum(self._metric_int(attempt.get("total_duration")) for attempt in attempts),
+        }
+
     async def _detect_transport(self) -> str:
         """Detect the best available transport for talking to Ollama."""
         if self.transport:
@@ -778,6 +832,7 @@ class OllamaModel(BaseModel):
                     f"timeout for {self.model_name} via {transport}"
                 )
 
+                attempt_metrics: List[Dict[str, Any]] = []
                 payload = self._build_payload(prompt, generation_config, image_path=image_path)
                 if transport == "http":
                     result = await self._request_generate_http(payload, current_timeout)
@@ -790,6 +845,7 @@ class OllamaModel(BaseModel):
                         current_timeout,
                         image_path=image_path,
                     )
+                attempt_metrics.append(self._snapshot_attempt_metrics(result, transport=transport, raw_mode=False))
 
                 response_text = (result.get("response") or result.get("thinking") or "").strip()
                 should_retry_raw = (
@@ -816,14 +872,24 @@ class OllamaModel(BaseModel):
                         raw_result = await self._request_generate_http(raw_payload, current_timeout)
                     else:
                         raw_result = await self._request_generate_windows_curl(raw_payload, current_timeout)
+                    attempt_metrics.append(self._snapshot_attempt_metrics(raw_result, transport=transport, raw_mode=True))
 
                     raw_response_text = (raw_result.get("response") or raw_result.get("thinking") or "").strip()
                     if raw_response_text:
+                        raw_result["raw_fallback_attempted"] = True
                         raw_result["used_raw_fallback"] = True
                         result = raw_result
                         response_text = raw_response_text
                     else:
                         result["raw_fallback_attempted"] = True
+
+                aggregate_metrics = self._aggregate_attempt_metrics(attempt_metrics)
+                if aggregate_metrics:
+                    result.update(aggregate_metrics)
+                    result["attempts"] = attempt_metrics
+                    result["transport"] = transport
+                    result["raw_fallback_attempted"] = bool(result.get("raw_fallback_attempted"))
+                    result["used_raw_fallback"] = bool(result.get("used_raw_fallback"))
 
                 if result.get("error"):
                     self.logger.warning(f"Ollama generation returned an error for {self.model_name}: {result['error']}")
@@ -873,6 +939,9 @@ class OllamaModel(BaseModel):
         prompt_eval_duration_sec = self._duration_ns_to_sec(raw.get("prompt_eval_duration"))
         load_duration_sec = self._duration_ns_to_sec(raw.get("load_duration"))
         total_duration_sec = self._duration_ns_to_sec(raw.get("total_duration")) or latency_sec
+        end_to_end_tokens_per_second = (completion_tokens / latency_sec) if latency_sec > 0 else 0.0
+        eval_tokens_per_second = (completion_tokens / eval_duration_sec) if eval_duration_sec > 0 else 0.0
+        prompt_tokens_per_second = (prompt_tokens / prompt_eval_duration_sec) if prompt_eval_duration_sec > 0 else 0.0
 
         return GenerationResult(
             text=(raw.get("response") or raw.get("thinking") or "").strip(),
@@ -888,7 +957,11 @@ class OllamaModel(BaseModel):
             load_duration_sec=load_duration_sec,
             prompt_eval_duration_sec=prompt_eval_duration_sec,
             eval_duration_sec=eval_duration_sec,
-            tokens_per_second=(completion_tokens / eval_duration_sec) if eval_duration_sec > 0 else 0.0,
+            tokens_per_second=end_to_end_tokens_per_second,
+            eval_tokens_per_second=eval_tokens_per_second,
+            prompt_tokens_per_second=prompt_tokens_per_second,
+            used_raw_fallback=bool(raw.get("used_raw_fallback")),
+            raw_fallback_attempted=bool(raw.get("raw_fallback_attempted") or raw.get("used_raw_fallback")),
             raw=raw,
         )
 

@@ -16,6 +16,7 @@ from models.model_manager import ModelManager
 from benchmarks.benchmark_registry import BenchmarkRegistry
 from metrics.result_aggregator import ResultAggregator
 from utils.storage import ResultStorage
+from pipeline.config import DEFAULT_CONFIG_PATH
 
 @dataclass
 class EvaluationConfig:
@@ -99,7 +100,7 @@ class EvaluationOrchestrator:
     Optimized for minimal resource usage and cloud-first approach.
     """
     
-    def __init__(self, config_path: str = "config/config.yaml"):
+    def __init__(self, config_path: str = DEFAULT_CONFIG_PATH):
         # Setup logging first
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
