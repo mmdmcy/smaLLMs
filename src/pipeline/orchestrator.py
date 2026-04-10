@@ -22,6 +22,8 @@ from src.pipeline.artifacts import (
 )
 from src.pipeline.benchmarks import (
     DEFAULT_BENCHMARKS,
+    configure_dataset_runtime,
+    dataset_runtime_info,
     expand_benchmark_selection,
     get_supported_benchmark,
     list_benchmark_suites,
@@ -45,6 +47,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "artifacts_dir": "artifacts",
         "website_export_dir": "website_exports",
         "website_sync_dir": "../websmaLLMs/public/data",
+        "dataset_cache_dir": None,
+        "allow_remote_dataset_downloads": True,
         "default_provider": "ollama",
         "default_samples": 25,
         "default_temperature": 0.0,
@@ -98,6 +102,7 @@ class LocalBenchmarkOrchestrator:
     def __init__(self, config_path: str = "config/config.yaml"):
         self.config_path = config_path
         self.config = _load_config(config_path)
+        configure_dataset_runtime(self.config.get("local_benchmarks", {}))
         self.model_manager = ModelManager(self.config)
         artifacts_dir = self.config.get("local_benchmarks", {}).get("artifacts_dir", "artifacts")
         self.artifact_store = ArtifactStore(artifacts_dir)
@@ -162,6 +167,7 @@ class LocalBenchmarkOrchestrator:
             "temperature": temperature,
             "supported_benchmarks": list_supported_benchmarks(),
             "benchmark_suites": list_benchmark_suites(),
+            "dataset_runtime": dataset_runtime_info(),
             "system": collect_system_metadata(),
             "repository": collect_repository_metadata("."),
             "config_path": self.config_path,

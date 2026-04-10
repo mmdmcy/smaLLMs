@@ -1,4 +1,0 @@
-# Backwards-compatible alias for the old local install path.
-# Normal users can use requirements.txt instead.
-
--r requirements.txt

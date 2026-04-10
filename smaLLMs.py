@@ -20,10 +20,11 @@ sys.path.append(str(Path(__file__).parent))
 
 from src.pipeline.benchmarks import (
     DEFAULT_BENCHMARKS,
+    dataset_runtime_info,
     expand_benchmark_selection,
-    list_benchmark_catalog,
     list_benchmark_suites,
     list_supported_benchmarks,
+    warm_benchmark_cache,
 )
 from src.cli.setup_checks import build_setup_report_lines, collect_setup_report
 
@@ -301,7 +302,7 @@ class SmaLLMsCLI:
 {self.terminal.BOLD}Commands:{self.terminal.RESET}
   {self.terminal.GREEN}doctor{self.terminal.RESET}     - Check Ollama / LM Studio status and next steps
   {self.terminal.GREEN}discover{self.terminal.RESET}   - Find local models across supported providers
-  {self.terminal.GREEN}benchmarks{self.terminal.RESET} - Show runnable benchmarks and tracked frontier evals
+  {self.terminal.GREEN}benchmarks{self.terminal.RESET} - Show supported benchmark suites and benchmarks
   {self.terminal.GREEN}run{self.terminal.RESET}        - Start a benchmark run
   {self.terminal.GREEN}quick{self.terminal.RESET}      - Run the default core suite on all discovered models
   {self.terminal.GREEN}status{self.terminal.RESET}     - Show the latest run summary
@@ -359,20 +360,26 @@ class SmaLLMsCLI:
 
     def show_setup_status(self, json_output: bool = False) -> None:
         """Show local runtime readiness and next steps."""
+        self._get_orchestrator()
         report = collect_setup_report()
+        dataset_runtime = dataset_runtime_info()
         if json_output:
-            print(json.dumps(report.to_dict(), indent=2))
+            payload = report.to_dict()
+            payload["dataset_runtime"] = dataset_runtime
+            print(json.dumps(payload, indent=2))
             return
 
         print(f"\n{self.terminal.BOLD}Setup And Model Status{self.terminal.RESET}")
         for line in build_setup_report_lines(report):
             print(line)
+        if dataset_runtime["allow_remote_dataset_downloads"]:
+            print(f"Benchmark data cache: {dataset_runtime['cache_dir']} (filled automatically on first use)")
+        else:
+            print(f"Benchmark data cache: {dataset_runtime['cache_dir']} (offline-only mode)")
 
     def show_benchmarks(self, json_output: bool = False) -> None:
         """Print benchmark and suite metadata."""
         runnable = list_supported_benchmarks()
-        catalog = list_benchmark_catalog()
-        tracked = [entry for entry in catalog if not entry["local_runnable"]]
         suites = list_benchmark_suites()
 
         if json_output:
@@ -380,15 +387,14 @@ class SmaLLMsCLI:
                 json.dumps(
                     {
                         "suites": suites,
-                        "runnable_benchmarks": runnable,
-                        "tracked_benchmarks": tracked,
+                        "benchmarks": runnable,
                     },
                     indent=2,
                 )
             )
             return
 
-        print(f"\n{self.terminal.BOLD}Runnable Benchmark Suites{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD}Supported Benchmark Suites{self.terminal.RESET}")
         for suite in suites:
             print(
                 f"  {self.terminal.CYAN}{suite['key']}{self.terminal.RESET} - "
@@ -396,21 +402,11 @@ class SmaLLMsCLI:
             )
             print(f"      {', '.join(suite['benchmarks'])}")
 
-        print(f"\n{self.terminal.BOLD}Runnable Local Benchmarks{self.terminal.RESET}")
+        print(f"\n{self.terminal.BOLD}Supported Benchmarks{self.terminal.RESET}")
         for benchmark in runnable:
             print(
                 f"  {self.terminal.GREEN}{benchmark['key']}{self.terminal.RESET} "
                 f"[{benchmark['category']}] - {benchmark['display_name']}: {benchmark['description']}"
-            )
-
-        print(f"\n{self.terminal.BOLD}Tracked Frontier Benchmarks{self.terminal.RESET}")
-        for benchmark in tracked:
-            status = benchmark["status"].replace("_", " ")
-            harness = benchmark["harness"].replace("_", " ")
-            labs = f" | labs: {', '.join(benchmark.get('labs', []))}" if benchmark.get("labs") else ""
-            print(
-                f"  {self.terminal.YELLOW}{benchmark['key']}{self.terminal.RESET} "
-                f"[{status}] - {benchmark['display_name']}: {harness}{labs}"
             )
 
     def show_status(self, json_output: bool = False) -> None:
@@ -464,6 +460,35 @@ class SmaLLMsCLI:
         print(f"\n{self.terminal.BOLD}Exported Website Bundle{self.terminal.RESET}")
         for name, path in exported.items():
             print(f"  {name}: {path}")
+
+    def warm_dataset_cache(
+        self,
+        benchmarks: Optional[List[str]] = None,
+        samples: Optional[int] = None,
+        json_output: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Warm the benchmark sample cache outside the repository."""
+        self._get_orchestrator()
+        benchmark_selection = benchmarks or list(DEFAULT_BENCHMARKS)
+        sample_count = samples or int(self.config.get("local_benchmarks", {}).get("default_samples", 10))
+        prepared = warm_benchmark_cache(benchmark_selection, sample_count)
+        dataset_runtime = dataset_runtime_info()
+
+        if json_output:
+            print(json.dumps({"dataset_runtime": dataset_runtime, "prepared": prepared}, indent=2))
+            return prepared
+
+        print(f"\n{self.terminal.BOLD}Benchmark Dataset Cache{self.terminal.RESET}")
+        print(f"  Cache dir: {dataset_runtime['cache_dir']}")
+        remote_status = "enabled" if dataset_runtime["allow_remote_dataset_downloads"] else "disabled"
+        print(f"  Remote downloads: {remote_status}")
+        for entry in prepared:
+            state = "ready" if entry["ready"] else "partial"
+            print(
+                f"  {entry['benchmark']}: cached {entry['cached_rows']}/{entry['requested_samples']} rows "
+                f"({state})"
+            )
+        return prepared
 
     def _prompt_model_selection(self, models: Sequence[Dict[str, Any]]) -> List[str]:
         """Prompt for model selection in interactive mode."""
@@ -645,6 +670,8 @@ class SmaLLMsCLI:
                     asyncio.run(self.discover_models())
                 elif command == "benchmarks":
                     self.show_benchmarks()
+                elif command == "cache":
+                    self.warm_dataset_cache()
                 elif command == "run":
                     asyncio.run(self.run_interactive_benchmark())
                 elif command == "quick":
@@ -677,6 +704,7 @@ def build_parser() -> argparse.ArgumentParser:
             "discover",
             "discover-local",
             "benchmarks",
+            "cache",
             "run",
             "local-run",
             "quick",
@@ -715,6 +743,8 @@ def main() -> None:
             asyncio.run(app.discover_models(json_output=args.json))
         elif command == "benchmarks":
             app.show_benchmarks(json_output=args.json)
+        elif command == "cache":
+            app.warm_dataset_cache(benchmarks=benchmarks, samples=args.samples, json_output=args.json)
         elif command in {"run", "local-run"}:
             asyncio.run(
                 app.run_benchmarks(
