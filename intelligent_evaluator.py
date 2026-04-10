@@ -25,6 +25,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.evaluator import EvaluationOrchestrator, EvaluationConfig
 from src.models.model_manager import ModelManager
+from src.pipeline.config import DEFAULT_CONFIG_PATH
 from beautiful_terminal import BeautifulTerminal, start_evaluation_display, update_evaluation_progress, evaluation_completed, evaluation_failed, start_evaluation
 
 @dataclass
@@ -142,7 +143,7 @@ class IntelligentEvaluationOrchestrator:
         
     def _load_app_config(self) -> Dict[str, Any]:
         """Load configuration from file."""
-        config_path = Path("config/config.yaml")
+        config_path = Path(DEFAULT_CONFIG_PATH)
         if config_path.exists():
             with open(config_path, 'r') as f:
                 return yaml.safe_load(f)

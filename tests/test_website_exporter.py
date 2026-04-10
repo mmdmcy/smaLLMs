@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.pipeline.config import WEBSITE_EXPORT_SCHEMA_VERSION
 from src.pipeline.exporter import WebsiteExporter
 
 
@@ -176,7 +177,7 @@ class WebsiteExporterTests(unittest.TestCase):
         self.assertIn("sync/latest-session.json", exported)
 
         session = json.loads(session_path.read_text(encoding="utf-8"))
-        self.assertEqual(session["schema_version"], "3.0")
+        self.assertEqual(session["schema_version"], WEBSITE_EXPORT_SCHEMA_VERSION)
         self.assertEqual(session["run"]["run_id"], self.run_id)
         self.assertEqual(session["summary"]["totals"]["samples"], 1)
         self.assertEqual(session["catalog"]["selected_benchmarks"][0]["key"], "gsm8k")

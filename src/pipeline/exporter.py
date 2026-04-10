@@ -4,13 +4,19 @@ Website export generation for structured benchmark artifacts.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import csv
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.pipeline.artifacts import ArtifactStore, safe_slug, utcnow_iso
+from src.pipeline.artifacts import ArtifactStore, portable_path, safe_slug, sanitize_system_metadata, utcnow_iso
 from src.pipeline.benchmarks import summarize_samples
+from src.pipeline.config import (
+    DEFAULT_ARTIFACTS_DIR,
+    DEFAULT_WEBSITE_EXPORT_DIR,
+    WEBSITE_EXPORT_SCHEMA_VERSION,
+)
 
 
 class WebsiteExporter:
@@ -18,8 +24,8 @@ class WebsiteExporter:
 
     def __init__(
         self,
-        artifacts_dir: str = "artifacts",
-        output_dir: str = "website_exports",
+        artifacts_dir: str = DEFAULT_ARTIFACTS_DIR,
+        output_dir: str = DEFAULT_WEBSITE_EXPORT_DIR,
         sync_dir: Optional[str] = None,
     ):
         self.artifacts = ArtifactStore(artifacts_dir)
@@ -31,6 +37,8 @@ class WebsiteExporter:
         """Export one run to a stable website bundle."""
         run_data = self.artifacts.load_run(run_id)
         run_id = run_data["run_id"]
+        sanitized_manifest = self._sanitize_manifest(run_data["manifest"])
+        schema_version = WEBSITE_EXPORT_SCHEMA_VERSION
 
         latest_dir = self.output_dir / "latest"
         run_dir = self.output_dir / "runs" / run_id
@@ -41,23 +49,30 @@ class WebsiteExporter:
         evaluations = self._build_evaluations_bundle(summary.get("evaluations", []))
         leaderboard = self._enrich_leaderboard(summary.get("leaderboard", []), evaluations)
         session_summary = self._make_session_summary(summary, evaluations)
+        exported_summary = dict(summary)
+        exported_summary["manifest_path"] = portable_path(exported_summary.get("manifest_path", "")) if exported_summary.get("manifest_path") else None
+        exported_summary["evaluations"] = [self._sanitize_evaluation_record(item) for item in summary.get("evaluations", [])]
+        exported_summary["leaderboard"] = leaderboard
+        exported_summary["totals"] = session_summary.get("totals", {})
         evaluation_briefs = [self._make_evaluation_brief(evaluation) for evaluation in evaluations]
         models_bundle = self._build_models_bundle(leaderboard, evaluation_briefs)
         benchmarks_bundle = self._build_benchmarks_bundle(evaluation_briefs)
         catalog_bundle = self._build_catalog_bundle(run_data["manifest"])
 
         session_payload = {
-            "schema_version": "3.0",
+            "schema_version": schema_version,
             "exported_at": utcnow_iso(),
             "source": {
-                "artifacts_dir": str(self.artifacts.base_dir),
-                "output_dir": str(self.output_dir),
-                "sync_dir": str(self.sync_dir) if self.sync_dir else None,
+                "artifacts_dir": portable_path(self.artifacts.base_dir),
+                "output_dir": portable_path(self.output_dir),
+                "sync_dir": portable_path(self.sync_dir) if self.sync_dir else None,
+                "payload_profile": "full",
+                "sample_payload_mode": "complete",
             },
             "run": {
                 "run_id": run_id,
-                "run_dir": run_data["run_dir"],
-                "manifest": run_data["manifest"],
+                "run_dir": portable_path(run_data["run_dir"]),
+                "manifest": sanitized_manifest,
             },
             "summary": session_summary,
             "catalog": catalog_bundle,
@@ -70,8 +85,8 @@ class WebsiteExporter:
         exported_files: Dict[str, str] = {}
 
         files_to_write = {
-            "manifest.json": run_data["manifest"],
-            "summary.json": summary,
+            "manifest.json": sanitized_manifest,
+            "summary.json": exported_summary,
             "leaderboard.json": leaderboard,
             "models.json": models_bundle,
             "benchmarks.json": benchmarks_bundle,
@@ -84,23 +99,30 @@ class WebsiteExporter:
             run_path = run_dir / filename
             self._write_json(latest_path, payload)
             self._write_json(run_path, payload)
-            exported_files[filename] = str(latest_path)
+            exported_files[filename] = portable_path(latest_path)
 
         csv_path = latest_dir / "leaderboard.csv"
         self._write_leaderboard_csv(csv_path, leaderboard)
         self._write_leaderboard_csv(run_dir / "leaderboard.csv", leaderboard)
-        exported_files["leaderboard.csv"] = str(csv_path)
+        exported_files["leaderboard.csv"] = portable_path(csv_path)
 
         html_path = latest_dir / "index.html"
         self._write_html_preview(html_path, session_summary, leaderboard)
         self._write_html_preview(run_dir / "index.html", session_summary, leaderboard)
-        exported_files["index.html"] = str(html_path)
+        exported_files["index.html"] = portable_path(html_path)
 
         latest_pointer = self.output_dir / "latest_run.txt"
         latest_pointer.write_text(run_id + "\n", encoding="utf-8")
 
         if self.sync_dir is not None:
-            exported_files.update(self._sync_session_bundle(run_id, session_payload, session_summary))
+            exported_files.update(
+                self._sync_session_bundle(
+                    run_id,
+                    self._build_sync_session_payload(session_payload),
+                    session_summary,
+                    full_payload_size_bytes=self._payload_size_bytes(session_payload),
+                )
+            )
 
         return exported_files
 
@@ -115,6 +137,28 @@ class WebsiteExporter:
             return candidate
         return None
 
+    def _sanitize_manifest(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
+        """Drop host-identifying fields and normalize any path-like values."""
+        sanitized = dict(manifest)
+        if "system" in sanitized and isinstance(sanitized["system"], dict):
+            sanitized["system"] = sanitize_system_metadata(sanitized["system"])
+        if sanitized.get("config_path"):
+            sanitized["config_path"] = portable_path(sanitized["config_path"])
+        return sanitized
+
+    def _sanitize_artifact_paths(self, artifact_paths: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize evaluation artifact paths for export."""
+        sanitized: Dict[str, Any] = {}
+        for key, value in (artifact_paths or {}).items():
+            sanitized[key] = portable_path(value) if isinstance(value, str) and value else value
+        return sanitized
+
+    def _sanitize_evaluation_record(self, evaluation: Dict[str, Any]) -> Dict[str, Any]:
+        """Sanitize one evaluation record before writing exported JSON."""
+        sanitized = dict(evaluation)
+        sanitized["artifact_paths"] = self._sanitize_artifact_paths(evaluation.get("artifact_paths", {}))
+        return sanitized
+
     def _build_evaluations_bundle(self, evaluations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Build full evaluation records with embedded samples."""
         bundled: List[Dict[str, Any]] = []
@@ -126,7 +170,7 @@ class WebsiteExporter:
             sample_path = evaluation.get("artifact_paths", {}).get("samples_jsonl")
             samples = self._load_samples(sample_path=sample_path, evaluation_id=evaluation_id)
 
-            bundled_evaluation = dict(evaluation)
+            bundled_evaluation = self._sanitize_evaluation_record(evaluation)
             bundled_evaluation["evaluation_id"] = evaluation_id
             bundled_evaluation["samples"] = samples
             bundled_evaluation["sample_count_embedded"] = len(samples)
@@ -197,7 +241,7 @@ class WebsiteExporter:
             "metrics": evaluation.get("metrics", {}),
             "status": evaluation.get("status"),
             "error": evaluation.get("error"),
-            "artifact_paths": evaluation.get("artifact_paths", {}),
+            "artifact_paths": self._sanitize_artifact_paths(evaluation.get("artifact_paths", {})),
             "sample_count_embedded": evaluation.get("sample_count_embedded", 0),
         }
 
@@ -311,6 +355,8 @@ class WebsiteExporter:
                     "success_count": 0,
                     "responded_count": 0,
                     "error_count": 0,
+                    "raw_fallback_count": 0,
+                    "raw_fallback_attempted_count": 0,
                     "total_prompt_tokens": 0,
                     "total_completion_tokens": 0,
                     "total_tokens": 0,
@@ -318,11 +364,14 @@ class WebsiteExporter:
                     "total_response_chars": 0,
                     "total_expected_answer_chars": 0,
                     "total_parsed_prediction_chars": 0,
-                    "_latency_weighted_sum": 0.0,
-                    "_load_weighted_sum": 0.0,
-                    "_prompt_eval_weighted_sum": 0.0,
-                    "_eval_weighted_sum": 0.0,
+                    "total_latency_sec": 0.0,
+                    "total_load_duration_sec": 0.0,
+                    "total_prompt_eval_duration_sec": 0.0,
+                    "total_eval_duration_sec": 0.0,
+                    "total_total_duration_sec": 0.0,
                     "_tps_weighted_sum": 0.0,
+                    "_eval_tps_weighted_sum": 0.0,
+                    "_prompt_tps_weighted_sum": 0.0,
                 },
             )
 
@@ -333,6 +382,8 @@ class WebsiteExporter:
             entry["success_count"] += int(metrics.get("success_count", 0))
             entry["responded_count"] += int(metrics.get("responded_count", 0))
             entry["error_count"] += int(metrics.get("error_count", 0))
+            entry["raw_fallback_count"] += int(metrics.get("raw_fallback_count", 0))
+            entry["raw_fallback_attempted_count"] += int(metrics.get("raw_fallback_attempted_count", 0))
             entry["total_prompt_tokens"] += int(metrics.get("total_prompt_tokens", 0))
             entry["total_completion_tokens"] += int(metrics.get("total_completion_tokens", 0))
             entry["total_tokens"] += int(metrics.get("total_tokens", 0))
@@ -340,11 +391,24 @@ class WebsiteExporter:
             entry["total_response_chars"] += int(metrics.get("total_response_chars", 0))
             entry["total_expected_answer_chars"] += int(metrics.get("total_expected_answer_chars", 0))
             entry["total_parsed_prediction_chars"] += int(metrics.get("total_parsed_prediction_chars", 0))
-            entry["_latency_weighted_sum"] += float(metrics.get("avg_latency_sec", 0.0)) * sample_count
-            entry["_load_weighted_sum"] += float(metrics.get("avg_load_duration_sec", 0.0)) * sample_count
-            entry["_prompt_eval_weighted_sum"] += float(metrics.get("avg_prompt_eval_duration_sec", 0.0)) * sample_count
-            entry["_eval_weighted_sum"] += float(metrics.get("avg_eval_duration_sec", 0.0)) * sample_count
+            entry["total_latency_sec"] += float(metrics.get("total_latency_sec", 0.0)) or (
+                float(metrics.get("avg_latency_sec", 0.0)) * sample_count
+            )
+            entry["total_load_duration_sec"] += float(metrics.get("total_load_duration_sec", 0.0)) or (
+                float(metrics.get("avg_load_duration_sec", 0.0)) * sample_count
+            )
+            entry["total_prompt_eval_duration_sec"] += float(metrics.get("total_prompt_eval_duration_sec", 0.0)) or (
+                float(metrics.get("avg_prompt_eval_duration_sec", 0.0)) * sample_count
+            )
+            entry["total_eval_duration_sec"] += float(metrics.get("total_eval_duration_sec", 0.0)) or (
+                float(metrics.get("avg_eval_duration_sec", 0.0)) * sample_count
+            )
+            entry["total_total_duration_sec"] += float(metrics.get("total_total_duration_sec", 0.0)) or (
+                float(metrics.get("avg_total_duration_sec", 0.0)) * sample_count
+            )
             entry["_tps_weighted_sum"] += float(metrics.get("avg_tokens_per_second", 0.0)) * sample_count
+            entry["_eval_tps_weighted_sum"] += float(metrics.get("avg_eval_tokens_per_second", 0.0)) * sample_count
+            entry["_prompt_tps_weighted_sum"] += float(metrics.get("avg_prompt_tokens_per_second", 0.0)) * sample_count
 
         rows: List[Dict[str, Any]] = []
         for entry in rebuilt.values():
@@ -353,18 +417,44 @@ class WebsiteExporter:
             row["overall_accuracy"] = round(row["correct_count"] / sample_count, 4) if sample_count else 0.0
             row["success_rate"] = round(row["success_count"] / sample_count, 4) if sample_count else 0.0
             row["response_rate"] = round(row["responded_count"] / sample_count, 4) if sample_count else 0.0
-            row["avg_latency_sec"] = round(row.pop("_latency_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+            row["raw_fallback_rate"] = round(row["raw_fallback_count"] / sample_count, 4) if sample_count else 0.0
+            row["raw_fallback_attempted_rate"] = (
+                round(row["raw_fallback_attempted_count"] / sample_count, 4) if sample_count else 0.0
+            )
+            row["avg_latency_sec"] = round(row["total_latency_sec"] / sample_count, 4) if sample_count else 0.0
             row["avg_load_duration_sec"] = (
-                round(row.pop("_load_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+                round(row["total_load_duration_sec"] / sample_count, 4) if sample_count else 0.0
             )
             row["avg_prompt_eval_duration_sec"] = (
-                round(row.pop("_prompt_eval_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+                round(row["total_prompt_eval_duration_sec"] / sample_count, 4) if sample_count else 0.0
             )
             row["avg_eval_duration_sec"] = (
-                round(row.pop("_eval_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+                round(row["total_eval_duration_sec"] / sample_count, 4) if sample_count else 0.0
+            )
+            row["avg_total_duration_sec"] = (
+                round(row["total_total_duration_sec"] / sample_count, 4) if sample_count else 0.0
+            )
+            row["overall_tokens_per_second"] = (
+                round(row["total_completion_tokens"] / row["total_latency_sec"], 4) if row["total_latency_sec"] else 0.0
             )
             row["avg_tokens_per_second"] = (
                 round(row.pop("_tps_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+            )
+            row["overall_eval_tokens_per_second"] = (
+                round(row["total_completion_tokens"] / row["total_eval_duration_sec"], 4)
+                if row["total_eval_duration_sec"]
+                else 0.0
+            )
+            row["avg_eval_tokens_per_second"] = (
+                round(row.pop("_eval_tps_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
+            )
+            row["overall_prompt_tokens_per_second"] = (
+                round(row["total_prompt_tokens"] / row["total_prompt_eval_duration_sec"], 4)
+                if row["total_prompt_eval_duration_sec"]
+                else 0.0
+            )
+            row["avg_prompt_tokens_per_second"] = (
+                round(row.pop("_prompt_tps_weighted_sum", 0.0) / sample_count, 4) if sample_count else 0.0
             )
             rows.append(row)
 
@@ -382,6 +472,10 @@ class WebsiteExporter:
             success_count = sum(int(item.get("metrics", {}).get("success_count", 0)) for item in evaluations)
             responded_count = sum(int(item.get("metrics", {}).get("responded_count", 0)) for item in evaluations)
             error_count = sum(int(item.get("metrics", {}).get("error_count", 0)) for item in evaluations)
+            raw_fallback_count = sum(int(item.get("metrics", {}).get("raw_fallback_count", 0)) for item in evaluations)
+            raw_fallback_attempted_count = sum(
+                int(item.get("metrics", {}).get("raw_fallback_attempted_count", 0)) for item in evaluations
+            )
             total_prompt_tokens = sum(int(item.get("metrics", {}).get("total_prompt_tokens", 0)) for item in evaluations)
             total_completion_tokens = sum(
                 int(item.get("metrics", {}).get("total_completion_tokens", 0)) for item in evaluations
@@ -389,24 +483,36 @@ class WebsiteExporter:
             total_tokens = sum(int(item.get("metrics", {}).get("total_tokens", 0)) for item in evaluations)
             total_prompt_chars = sum(int(item.get("metrics", {}).get("total_prompt_chars", 0)) for item in evaluations)
             total_response_chars = sum(int(item.get("metrics", {}).get("total_response_chars", 0)) for item in evaluations)
-            latency_weighted_sum = sum(
-                float(item.get("metrics", {}).get("avg_latency_sec", 0.0))
-                * int(item.get("metrics", {}).get("sample_count", 0))
+            total_latency_sec = sum(
+                float(item.get("metrics", {}).get("total_latency_sec", 0.0))
+                or (
+                    float(item.get("metrics", {}).get("avg_latency_sec", 0.0))
+                    * int(item.get("metrics", {}).get("sample_count", 0))
+                )
                 for item in evaluations
             )
-            load_weighted_sum = sum(
-                float(item.get("metrics", {}).get("avg_load_duration_sec", 0.0))
-                * int(item.get("metrics", {}).get("sample_count", 0))
+            total_load_duration_sec = sum(
+                float(item.get("metrics", {}).get("total_load_duration_sec", 0.0))
+                or (
+                    float(item.get("metrics", {}).get("avg_load_duration_sec", 0.0))
+                    * int(item.get("metrics", {}).get("sample_count", 0))
+                )
                 for item in evaluations
             )
-            prompt_eval_weighted_sum = sum(
-                float(item.get("metrics", {}).get("avg_prompt_eval_duration_sec", 0.0))
-                * int(item.get("metrics", {}).get("sample_count", 0))
+            total_prompt_eval_duration_sec = sum(
+                float(item.get("metrics", {}).get("total_prompt_eval_duration_sec", 0.0))
+                or (
+                    float(item.get("metrics", {}).get("avg_prompt_eval_duration_sec", 0.0))
+                    * int(item.get("metrics", {}).get("sample_count", 0))
+                )
                 for item in evaluations
             )
-            eval_weighted_sum = sum(
-                float(item.get("metrics", {}).get("avg_eval_duration_sec", 0.0))
-                * int(item.get("metrics", {}).get("sample_count", 0))
+            total_eval_duration_sec = sum(
+                float(item.get("metrics", {}).get("total_eval_duration_sec", 0.0))
+                or (
+                    float(item.get("metrics", {}).get("avg_eval_duration_sec", 0.0))
+                    * int(item.get("metrics", {}).get("sample_count", 0))
+                )
                 for item in evaluations
             )
 
@@ -424,17 +530,36 @@ class WebsiteExporter:
                     "success_rate": round(success_count / sample_count, 4) if sample_count else 0.0,
                     "responded": responded_count,
                     "response_rate": round(responded_count / sample_count, 4) if sample_count else 0.0,
+                    "raw_fallback_count": raw_fallback_count,
+                    "raw_fallback_rate": round(raw_fallback_count / sample_count, 4) if sample_count else 0.0,
+                    "raw_fallback_attempted_count": raw_fallback_attempted_count,
+                    "raw_fallback_attempted_rate": round(raw_fallback_attempted_count / sample_count, 4)
+                    if sample_count
+                    else 0.0,
                     "errors": error_count,
                     "total_prompt_tokens": total_prompt_tokens,
                     "total_completion_tokens": total_completion_tokens,
                     "total_tokens": total_tokens,
-                    "avg_latency_sec": round(latency_weighted_sum / sample_count, 4) if sample_count else 0.0,
-                    "total_duration_sec": round(latency_weighted_sum, 4),
-                    "avg_load_duration_sec": round(load_weighted_sum / sample_count, 4) if sample_count else 0.0,
-                    "avg_prompt_eval_duration_sec": round(prompt_eval_weighted_sum / sample_count, 4)
+                    "avg_latency_sec": round(total_latency_sec / sample_count, 4) if sample_count else 0.0,
+                    "total_latency_sec": round(total_latency_sec, 4),
+                    "total_duration_sec": round(total_latency_sec, 4),
+                    "avg_load_duration_sec": round(total_load_duration_sec / sample_count, 4) if sample_count else 0.0,
+                    "total_load_duration_sec": round(total_load_duration_sec, 4),
+                    "avg_prompt_eval_duration_sec": round(total_prompt_eval_duration_sec / sample_count, 4)
                     if sample_count
                     else 0.0,
-                    "avg_eval_duration_sec": round(eval_weighted_sum / sample_count, 4) if sample_count else 0.0,
+                    "total_prompt_eval_duration_sec": round(total_prompt_eval_duration_sec, 4),
+                    "avg_eval_duration_sec": round(total_eval_duration_sec / sample_count, 4) if sample_count else 0.0,
+                    "total_eval_duration_sec": round(total_eval_duration_sec, 4),
+                    "overall_tokens_per_second": round(total_completion_tokens / total_latency_sec, 4)
+                    if total_latency_sec > 0
+                    else 0.0,
+                    "overall_eval_tokens_per_second": round(total_completion_tokens / total_eval_duration_sec, 4)
+                    if total_eval_duration_sec > 0
+                    else 0.0,
+                    "overall_prompt_tokens_per_second": round(total_prompt_tokens / total_prompt_eval_duration_sec, 4)
+                    if total_prompt_eval_duration_sec > 0
+                    else 0.0,
                     "total_prompt_chars": total_prompt_chars,
                     "total_response_chars": total_response_chars,
                 }
@@ -443,15 +568,92 @@ class WebsiteExporter:
         return {
             "run_id": summary.get("run_id"),
             "generated_at": summary.get("generated_at"),
-            "manifest_path": summary.get("manifest_path"),
+            "manifest_path": portable_path(summary.get("manifest_path")) if summary.get("manifest_path") else None,
             "totals": totals,
         }
+
+    def _build_sync_session_payload(self, session_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a compact website payload while keeping full local exports intact."""
+        compact_payload = deepcopy(session_payload)
+        source = compact_payload.get("source", {})
+        if isinstance(source, dict):
+            source["payload_profile"] = "compact"
+            source["sample_payload_mode"] = "trimmed_raw_metrics"
+
+        for evaluation in compact_payload.get("evaluations", []):
+            if not isinstance(evaluation, dict):
+                continue
+            for sample in evaluation.get("samples", []):
+                if not isinstance(sample, dict):
+                    continue
+                sample["raw_provider_metrics"] = self._compact_raw_provider_metrics(sample.get("raw_provider_metrics"))
+
+        return compact_payload
+
+    def _compact_raw_provider_metrics(self, raw_metrics: Any) -> Any:
+        """Keep only the raw-provider fields that help interpret website results."""
+        if not isinstance(raw_metrics, dict):
+            return raw_metrics
+
+        keep_keys = [
+            "model",
+            "created_at",
+            "done",
+            "done_reason",
+            "error",
+            "total_duration",
+            "load_duration",
+            "prompt_eval_count",
+            "prompt_eval_duration",
+            "eval_count",
+            "eval_duration",
+            "attempt_count",
+            "transport",
+            "raw_fallback_attempted",
+            "used_raw_fallback",
+        ]
+        attempt_keep_keys = [
+            "transport",
+            "raw_mode",
+            "error",
+            "response_chars",
+            "thinking_chars",
+            "prompt_eval_count",
+            "eval_count",
+            "load_duration",
+            "prompt_eval_duration",
+            "eval_duration",
+            "total_duration",
+        ]
+
+        compact = {key: raw_metrics[key] for key in keep_keys if key in raw_metrics}
+        attempts = raw_metrics.get("attempts")
+        if isinstance(attempts, list):
+            compact_attempts = []
+            for attempt in attempts:
+                if not isinstance(attempt, dict):
+                    continue
+                compact_attempt = {key: attempt[key] for key in attempt_keep_keys if key in attempt}
+                if compact_attempt:
+                    compact_attempts.append(compact_attempt)
+            if compact_attempts:
+                compact["attempts"] = compact_attempts
+
+        if compact:
+            compact["trimmed"] = True
+            return compact
+        return None
+
+    def _payload_size_bytes(self, payload: Any) -> int:
+        """Return the UTF-8 payload size for compact JSON serialization."""
+        return len(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
     def _sync_session_bundle(
         self,
         run_id: str,
         session_payload: Dict[str, Any],
         summary: Dict[str, Any],
+        full_payload_size_bytes: Optional[int] = None,
     ) -> Dict[str, str]:
         """Mirror the latest session bundle into the website repo."""
         if self.sync_dir is None:
@@ -461,32 +663,45 @@ class WebsiteExporter:
         meta_path = self.sync_dir / "latest-session.meta.json"
         history_path = self.sync_dir / "runs" / f"{run_id}.json"
         latest_pointer = self.sync_dir / "latest-run.txt"
+        payload_size_bytes = self._payload_size_bytes(session_payload)
 
-        self._write_json(latest_path, session_payload)
+        self._write_json(latest_path, session_payload, compact=True)
         self._write_json(
             meta_path,
             {
-                "schema_version": "3.0",
+                "schema_version": session_payload.get("schema_version", WEBSITE_EXPORT_SCHEMA_VERSION),
                 "run_id": run_id,
                 "updated_at": utcnow_iso(),
                 "totals": summary.get("totals", {}),
+                "payload_profile": session_payload.get("source", {}).get("payload_profile"),
+                "sample_payload_mode": session_payload.get("source", {}).get("sample_payload_mode"),
+                "payload_size_bytes": payload_size_bytes,
+                "payload_size_mb": round(payload_size_bytes / (1024 * 1024), 2),
+                "full_payload_size_bytes": full_payload_size_bytes,
+                "full_payload_size_mb": round(full_payload_size_bytes / (1024 * 1024), 2)
+                if full_payload_size_bytes is not None
+                else None,
             },
+            compact=True,
         )
-        self._write_json(history_path, session_payload)
+        self._write_json(history_path, session_payload, compact=True)
         latest_pointer.parent.mkdir(parents=True, exist_ok=True)
         latest_pointer.write_text(run_id + "\n", encoding="utf-8")
 
         return {
-            "sync/latest-session.json": str(latest_path),
-            "sync/latest-session.meta.json": str(meta_path),
-            "sync/runs.json": str(history_path),
+            "sync/latest-session.json": portable_path(latest_path),
+            "sync/latest-session.meta.json": portable_path(meta_path),
+            f"sync/runs/{run_id}.json": portable_path(history_path),
         }
 
-    def _write_json(self, path: Path, payload: Any) -> None:
+    def _write_json(self, path: Path, payload: Any, compact: bool = False) -> None:
         """Write a JSON payload to disk."""
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
+            if compact:
+                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+            else:
+                json.dump(payload, handle, indent=2, ensure_ascii=False)
 
     def _write_leaderboard_csv(self, path: Path, leaderboard: List[Dict[str, Any]]) -> None:
         """Write a flattened leaderboard CSV."""
@@ -518,11 +733,17 @@ class WebsiteExporter:
             "total_samples",
             "correct_count",
             "error_count",
+            "raw_fallback_rate",
             "avg_latency_sec",
             "avg_load_duration_sec",
             "avg_prompt_eval_duration_sec",
             "avg_eval_duration_sec",
+            "overall_tokens_per_second",
             "avg_tokens_per_second",
+            "overall_eval_tokens_per_second",
+            "avg_eval_tokens_per_second",
+            "overall_prompt_tokens_per_second",
+            "avg_prompt_tokens_per_second",
             "total_prompt_tokens",
             "total_completion_tokens",
             "total_tokens",
