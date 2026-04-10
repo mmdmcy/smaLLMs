@@ -13,6 +13,11 @@ smaLLMs is built for:
 - reproducible benchmark runs with raw sample artifacts
 - honest reporting about which benchmarks are runnable today versus only tracked for future support
 
+Important distinction:
+- model inference is local-first through Ollama or LM Studio
+- benchmark datasets are currently loaded through the Hugging Face `datasets` ecosystem unless you add your own local dataset mirror/cache workflow
+- that means local benchmarking does not currently mean fully offline benchmarking
+
 ## What smaLLMs is trying to be
 
 Not a toy wrapper around a few prompts.
@@ -242,6 +247,7 @@ Runnable suites currently include:
 ## Current limitations
 
 - Some dependencies are required even for local discovery, including `aiohttp`.
+- Benchmark datasets are fetched via Hugging Face `datasets`/HF Hub unless already cached locally, so the current runner still needs that data path even when model inference stays local.
 - The standard local install is intentionally small; use `requirements-dev.txt` only if you need the broader development environment.
 - Frontier agentic benchmarks are tracked in the catalog but not yet executed by the local runner.
 - Results are only as comparable as the local runtime settings and hardware conditions you keep consistent.
