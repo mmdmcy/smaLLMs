@@ -623,6 +623,7 @@ class OllamaModel(BaseModel):
         prompt: str,
         generation_config: GenerationConfig,
         image_path: Optional[str] = None,
+        raw_mode: bool = False,
     ) -> Dict[str, Any]:
         """Build a standard Ollama generate payload."""
         payload = {
@@ -637,6 +638,12 @@ class OllamaModel(BaseModel):
             "stream": False,
             "keep_alive": "10m",
         }
+
+        if raw_mode:
+            # Some Ollama thinking-capable models spend their token budget in the hidden
+            # reasoning channel and leave `response` empty. Raw mode bypasses that template.
+            payload["raw"] = True
+            payload["think"] = False
 
         if image_path and self.supports_vision:
             base64_image = self._encode_image(image_path)
@@ -757,7 +764,6 @@ class OllamaModel(BaseModel):
         image_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate a raw Ollama response payload."""
-        payload = self._build_payload(prompt, generation_config, image_path=image_path)
         timeout_config = self._timeout_config()
         base_timeout = timeout_config["base_timeout"]
         max_retries = timeout_config["max_retries"]
@@ -772,6 +778,7 @@ class OllamaModel(BaseModel):
                     f"timeout for {self.model_name} via {transport}"
                 )
 
+                payload = self._build_payload(prompt, generation_config, image_path=image_path)
                 if transport == "http":
                     result = await self._request_generate_http(payload, current_timeout)
                 elif transport == "windows_curl":
@@ -785,6 +792,39 @@ class OllamaModel(BaseModel):
                     )
 
                 response_text = (result.get("response") or result.get("thinking") or "").strip()
+                should_retry_raw = (
+                    transport in {"http", "windows_curl"}
+                    and not result.get("error")
+                    and not str(result.get("response") or "").strip()
+                    and (
+                        str(result.get("thinking") or "").strip()
+                        or int(result.get("eval_count") or 0) > 0
+                    )
+                )
+                if should_retry_raw:
+                    self.logger.info(
+                        "Retrying %s with Ollama raw mode because the normal response channel was empty.",
+                        self.model_name,
+                    )
+                    raw_payload = self._build_payload(
+                        prompt,
+                        generation_config,
+                        image_path=image_path,
+                        raw_mode=True,
+                    )
+                    if transport == "http":
+                        raw_result = await self._request_generate_http(raw_payload, current_timeout)
+                    else:
+                        raw_result = await self._request_generate_windows_curl(raw_payload, current_timeout)
+
+                    raw_response_text = (raw_result.get("response") or raw_result.get("thinking") or "").strip()
+                    if raw_response_text:
+                        raw_result["used_raw_fallback"] = True
+                        result = raw_result
+                        response_text = raw_response_text
+                    else:
+                        result["raw_fallback_attempted"] = True
+
                 if result.get("error"):
                     self.logger.warning(f"Ollama generation returned an error for {self.model_name}: {result['error']}")
                 elif not response_text:
