@@ -20,6 +20,11 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequ
 ProgressCallback = Optional[Callable[[Dict[str, Any]], None]]
 LOGGER = logging.getLogger(__name__)
 
+# Windows without Developer Mode often cannot create the symlinks that Hugging Face
+# uses for a more space-efficient cache layout. Caching still works, so silence the
+# repeated warning and keep the benchmark UX clean by default.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
 
 @dataclass
 class DatasetRuntimeSettings:
@@ -286,6 +291,84 @@ def _extract_boxed_content(text: str) -> str:
     return "".join(content).strip()
 
 
+def _strip_thinking_markup(text: str) -> str:
+    """Remove lightweight reasoning tags that some local models emit."""
+    cleaned = re.sub(r"<think>.*?</think>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"</?think>", " ", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+def _dedupe_preserve_order(items: Sequence[str]) -> List[str]:
+    """Keep unique non-empty strings in their original order."""
+    seen = set()
+    deduped: List[str] = []
+    for item in items:
+        candidate = str(item).strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
+
+
+def _looks_truncated_answer_fragment(text: str) -> bool:
+    """Detect obviously cut-off answer fragments."""
+    fragment = text.rstrip()
+    if not fragment:
+        return True
+    return bool(re.search(r"[\+\-\*/=,:;(\[]\s*$", fragment))
+
+
+def _answer_candidates(text: str) -> List[str]:
+    """Extract focused answer-like spans from a model response."""
+    if not text:
+        return []
+
+    cleaned = _strip_thinking_markup(text)
+    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = _strip_code_fences(cleaned).strip()
+    if not cleaned:
+        return []
+
+    candidates: List[str] = []
+    marker_patterns = [
+        r"final answer\s*[:=]\s*",
+        r"correct answer\s*(?:is\s*)?[:=]?\s*",
+        r"best answer\s*(?:is\s*)?[:=]?\s*",
+        r"the answer is\s*",
+        r"\banswer\s*[:=]\s*",
+        r"\boption\s*(?:is\s*)?[:=]?\s*",
+        r"\bchoice\s*(?:is\s*)?[:=]?\s*",
+    ]
+    for pattern in marker_patterns:
+        matches = list(re.finditer(pattern, cleaned, flags=re.IGNORECASE))
+        if matches:
+            candidates.append(cleaned[matches[-1].end():].strip())
+
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    candidates.extend(reversed(lines[-3:]))
+    return _dedupe_preserve_order(candidates)
+
+
+def _normalize_option_text(text: str) -> str:
+    """Normalize answer-option text for loose matching."""
+    cleaned = _strip_thinking_markup(text)
+    cleaned = _strip_code_fences(cleaned)
+    cleaned = re.sub(
+        r"^\s*(?:assistant|answer|final answer|correct answer|best answer|option|choice)\s*(?:is|:|=)?\s*",
+        "",
+        cleaned,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    cleaned = cleaned.strip().strip('"').strip("'")
+    cleaned = re.sub(r"^\s*[A-Z0-9][\)\].:-]\s*", "", cleaned)
+    cleaned = cleaned.lower()
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
 def _extract_final_number(text: str) -> str:
     """Extract a final numeric answer from a response."""
     if not text:
@@ -295,20 +378,18 @@ def _extract_final_number(text: str) -> str:
     if boxed:
         text = boxed
 
-    explicit_patterns = [
-        r"final answer\s*[:=]\s*([^\n]+)",
-        r"answer\s*[:=]\s*([^\n]+)",
-        r"####\s*([^\n]+)",
-    ]
-    for pattern in explicit_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            candidate = match.group(1)
-            numbers = re.findall(r"[+-]?\d+(?:\.\d+)?", candidate.replace(",", ""))
-            if numbers:
-                return numbers[-1]
+    for candidate in _answer_candidates(text):
+        if _looks_truncated_answer_fragment(candidate):
+            continue
+        numbers = re.findall(r"[+-]?\d+(?:\.\d+)?", candidate.replace(",", ""))
+        if numbers:
+            return numbers[-1]
 
-    numbers = re.findall(r"[+-]?\d+(?:\.\d+)?", text.replace(",", ""))
+    cleaned = _strip_code_fences(_strip_thinking_markup(text)).strip()
+    if _looks_truncated_answer_fragment(cleaned):
+        return ""
+
+    numbers = re.findall(r"[+-]?\d+(?:\.\d+)?", cleaned.replace(",", ""))
     return numbers[-1] if numbers else ""
 
 
@@ -321,18 +402,16 @@ def _extract_final_text_answer(text: str) -> str:
     if boxed:
         return boxed
 
-    explicit_patterns = [
-        r"final answer\s*[:=]\s*([^\n]+)",
-        r"answer\s*[:=]\s*([^\n]+)",
-        r"####\s*([^\n]+)",
-    ]
-    for pattern in explicit_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
+    for candidate in _answer_candidates(text):
+        if _looks_truncated_answer_fragment(candidate):
+            continue
+        lines = [line.strip() for line in candidate.splitlines() if line.strip()]
+        if lines:
+            return lines[0].strip().strip('"').strip("'")
 
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    return lines[-1] if lines else text.strip()
+    cleaned = _strip_code_fences(_strip_thinking_markup(text)).strip()
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    return lines[-1] if lines else cleaned
 
 
 def _normalize_text_answer(value: str) -> str:
@@ -437,32 +516,73 @@ def _render_chat_prompt(serialized_prompt: str) -> str:
     return "\n\n".join(rendered)
 
 
-def _normalize_choice_response(response: str, labels: Sequence[str]) -> str:
+def _normalize_choice_response(
+    response: str,
+    labels: Sequence[str],
+    option_texts: Optional[Sequence[str]] = None,
+) -> str:
     """Normalize a multiple-choice response to one of the expected labels."""
     if not response:
         return ""
 
     canonical_labels = [label.strip().upper() for label in labels]
-    response_upper = response.strip().upper()
+    escaped_labels = "|".join(re.escape(label) for label in canonical_labels)
+    normalized_options: Dict[str, str] = {}
+    if option_texts:
+        for label, option_text in zip(canonical_labels, option_texts):
+            normalized = _normalize_option_text(str(option_text))
+            if normalized:
+                normalized_options[label] = normalized
 
-    for label in canonical_labels:
-        if re.search(rf"\b{re.escape(label)}\b", response_upper):
-            return label
+    for candidate in _answer_candidates(response):
+        candidate_clean = _strip_code_fences(_strip_thinking_markup(candidate)).strip()
+        if not candidate_clean:
+            continue
 
-    letters = [label for label in canonical_labels if len(label) == 1 and label.isalpha()]
-    if letters:
-        letter_match = re.search(r"\b([A-Z])\b", response_upper)
-        if letter_match and letter_match.group(1) in letters:
-            return letter_match.group(1)
+        candidate_upper = candidate_clean.upper().strip().strip('"').strip("'")
+        mentioned_labels = {
+            label for label in canonical_labels if re.search(rf"\b{re.escape(label)}\b", candidate_upper)
+        }
+        for label in canonical_labels:
+            if re.fullmatch(rf"[\(\[\{{<]*\s*{re.escape(label)}\s*[\)\]\}}>.,:;!\-]*", candidate_upper):
+                return label
 
-    numbers = [label for label in canonical_labels if label.isdigit()]
-    if numbers:
-        number_match = re.search(r"\b(\d+)\b", response_upper)
-        if number_match and number_match.group(1) in numbers:
-            return number_match.group(1)
+        prefix_match = re.match(
+            rf"^[\(\[\{{<]*\s*({escaped_labels})\s*(?:[:.)-]|\s|$)",
+            candidate_upper,
+        )
+        if prefix_match and len(mentioned_labels) <= 1:
+            return prefix_match.group(1)
 
-    if response_upper and response_upper[0] in canonical_labels:
-        return response_upper[0]
+        explicit_match = re.search(
+            rf"(?:FINAL ANSWER|CORRECT ANSWER|BEST ANSWER|ANSWER|OPTION|CHOICE)\s*(?:IS|:|=)?\s*[\(\[\{{<]*\s*({escaped_labels})\b",
+            candidate_upper,
+        )
+        if explicit_match:
+            return explicit_match.group(1)
+
+        supportive_match = re.search(
+            rf"(?:SO|THUS|THEREFORE|HENCE|I CHOOSE|I PICK|CHOOSE|PICK)\s*\(?({escaped_labels})\)?\s*(?:[:.)-]|$)",
+            candidate_upper,
+        )
+        if supportive_match and len(mentioned_labels) <= 1:
+            return supportive_match.group(1)
+
+        if len(candidate_upper) <= 12 and len(mentioned_labels) <= 1:
+            tokens = re.findall(r"\b[A-Z0-9]+\b", candidate_upper)
+            for token in reversed(tokens[-3:]):
+                if token in canonical_labels:
+                    return token
+
+        normalized_candidate = _normalize_option_text(candidate_clean)
+        if normalized_candidate and len(mentioned_labels) <= 1:
+            for label, normalized_option in normalized_options.items():
+                if normalized_candidate == normalized_option:
+                    return label
+                if len(normalized_candidate) >= 3 and normalized_candidate in normalized_option:
+                    return label
+                if len(normalized_option) >= 6 and normalized_option in normalized_candidate:
+                    return label
 
     return ""
 
@@ -472,19 +592,21 @@ def _normalize_boolean_response(response: str) -> str:
     if not response:
         return ""
 
-    response_lower = response.strip().lower()
-    response_lower = _extract_final_text_answer(response_lower)
+    for candidate in _answer_candidates(response):
+        candidate_lower = _strip_code_fences(_strip_thinking_markup(candidate)).strip().lower()
+        tokens = re.findall(r"\b(yes|no|true|false|correct|incorrect|1|0)\b", candidate_lower)
+        if not tokens:
+            continue
 
-    positive = ["yes", "true", "correct", "1"]
-    negative = ["no", "false", "incorrect", "0"]
-
-    for token in positive:
-        if re.search(rf"\b{re.escape(token)}\b", response_lower):
-            return "yes" if token in {"yes", "correct", "1"} else "true"
-
-    for token in negative:
-        if re.search(rf"\b{re.escape(token)}\b", response_lower):
-            return "no" if token in {"no", "incorrect", "0"} else "false"
+        token = tokens[-1]
+        if token in {"yes", "correct", "1"}:
+            return "yes"
+        if token == "true":
+            return "true"
+        if token in {"no", "incorrect", "0"}:
+            return "no"
+        if token == "false":
+            return "false"
 
     return ""
 
@@ -827,7 +949,7 @@ class MMLUBenchmark(DatasetBenchmark):
         return chr(65 + int(row["answer"]))
 
     def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
-        return _normalize_choice_response(response_text, ["A", "B", "C", "D"])
+        return _normalize_choice_response(response_text, ["A", "B", "C", "D"], option_texts=row["choices"])
 
     def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -862,7 +984,7 @@ class MMLUProBenchmark(DatasetBenchmark):
 
     def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
         labels = [chr(65 + idx) for idx in range(len(row["options"]))]
-        return _normalize_choice_response(response_text, labels)
+        return _normalize_choice_response(response_text, labels, option_texts=row["options"])
 
     def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -1136,6 +1258,7 @@ class ARCChallengeBenchmark(DatasetBenchmark):
         return _normalize_choice_response(
             response_text,
             [str(label).upper() for label in row["choices"]["label"]],
+            option_texts=[str(text) for text in row["choices"]["text"]],
         )
 
     def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -1175,7 +1298,7 @@ class HellaSwagBenchmark(DatasetBenchmark):
         return chr(65 + int(row["label"]))
 
     def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
-        return _normalize_choice_response(response_text, ["A", "B", "C", "D"])
+        return _normalize_choice_response(response_text, ["A", "B", "C", "D"], option_texts=row["endings"])
 
     def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -1208,7 +1331,7 @@ class WinograndeBenchmark(DatasetBenchmark):
         return "A" if str(row["answer"]) == "1" else "B"
 
     def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
-        return _normalize_choice_response(response_text, ["A", "B"])
+        return _normalize_choice_response(response_text, ["A", "B"], option_texts=[row["option1"], row["option2"]])
 
     def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -1278,6 +1401,7 @@ class CommonsenseQABenchmark(DatasetBenchmark):
         return _normalize_choice_response(
             response_text,
             [str(label).upper() for label in row["choices"]["label"]],
+            option_texts=[str(text) for text in row["choices"]["text"]],
         )
 
     def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -1291,7 +1415,7 @@ class CommonsenseQABenchmark(DatasetBenchmark):
 class PIQABenchmark(DatasetBenchmark):
     key = "piqa"
     display_name = "PIQA"
-    dataset_name = "piqa"
+    dataset_name = "nthngdy/piqa"
     config_name = None
     split = "validation"
     description = "Physical commonsense reasoning with two candidate solutions."
@@ -1311,7 +1435,7 @@ class PIQABenchmark(DatasetBenchmark):
         return "A" if int(row["label"]) == 0 else "B"
 
     def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
-        return _normalize_choice_response(response_text, ["A", "B"])
+        return _normalize_choice_response(response_text, ["A", "B"], option_texts=[row["sol1"], row["sol2"]])
 
     def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -1346,7 +1470,11 @@ class SocialIQABenchmark(DatasetBenchmark):
         return {"1": "A", "2": "B", "3": "C"}[str(row["label"])]
 
     def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
-        return _normalize_choice_response(response_text, ["A", "B", "C"])
+        return _normalize_choice_response(
+            response_text,
+            ["A", "B", "C"],
+            option_texts=[row["answerA"], row["answerB"], row["answerC"]],
+        )
 
     def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -1386,6 +1514,7 @@ class OpenBookQABenchmark(DatasetBenchmark):
         return _normalize_choice_response(
             response_text,
             [str(label).upper() for label in row["choices"]["label"]],
+            option_texts=[str(text) for text in row["choices"]["text"]],
         )
 
     def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -1423,7 +1552,7 @@ class TruthfulQAMC1Benchmark(DatasetBenchmark):
     def parse_prediction(self, response_text: str, row: Dict[str, Any]) -> str:
         choices = row["mc1_targets"]["choices"]
         labels = [chr(65 + idx) for idx in range(len(choices))]
-        return _normalize_choice_response(response_text, labels)
+        return _normalize_choice_response(response_text, labels, option_texts=choices)
 
     def sample_metadata(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {
