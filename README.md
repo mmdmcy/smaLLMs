@@ -170,6 +170,24 @@ Export the latest artifacts:
 python3 smaLLMs.py export
 ```
 
+## PortUI
+
+If you have the sibling `portui` repo checked out next to `smaLLMs`, you can use the PortUI app in [`portui/`](./portui) to drive the common cross-platform flows from one manifest-driven command surface.
+
+Linux or macOS:
+
+```bash
+sh ../portui/portui.sh --manifest-dir ./portui
+```
+
+Windows:
+
+```powershell
+..\portui\portui.ps1 -ManifestDir .\portui
+```
+
+The bundled actions cover the launcher, setup check, doctor, model discovery, benchmark listing, quick suite, exports, sibling `websmaLLMs` sync, and the unit test suite.
+
 ## Artifact outputs
 
 Each run writes structured artifacts to:

@@ -38,6 +38,11 @@ def _version_tuple(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in parts)
 
 
+def _current_python_matches(python_executable: Path) -> bool:
+    """Compare the invoked interpreter paths without resolving symlinks."""
+    return os.path.abspath(sys.executable) == os.path.abspath(str(python_executable))
+
+
 def _module_is_outdated(module: str) -> bool:
     """Return True when a module is present but below the required minimum version."""
     minimum = MIN_MODULE_VERSIONS.get(module)
@@ -77,7 +82,7 @@ def _missing_modules_for_current_python() -> List[str]:
 
 
 def _missing_modules_for_python(python_executable: Path) -> List[str]:
-    if Path(sys.executable).resolve() == python_executable.resolve():
+    if _current_python_matches(python_executable):
         return _missing_modules_for_current_python()
 
     script = (
@@ -137,6 +142,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print setup status after bootstrapping dependencies, then exit without opening the menu.",
     )
+    parser.add_argument(
+        "cli_args",
+        nargs=argparse.REMAINDER,
+        help="Optional smaLLMs.py command to run after bootstrapping. Use '-- <command> ...'.",
+    )
     return parser
 
 
@@ -159,8 +169,22 @@ def main() -> int:
     for line in build_setup_report_lines(report):
         print(line)
 
+    cli_args = list(args.cli_args)
+    if cli_args[:1] == ["--"]:
+        cli_args = cli_args[1:]
+
     if args.check_only:
         return 0
+
+    if cli_args:
+        print("")
+        print(f"Running smaLLMs.py {' '.join(cli_args)} ...")
+        result = subprocess.run(
+            [str(python_executable), str(repo_root / "smaLLMs.py"), *cli_args],
+            cwd=repo_root,
+            check=False,
+        )
+        return result.returncode
 
     print("")
     print("Opening the arrow-key menu ...")
