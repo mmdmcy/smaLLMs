@@ -10,6 +10,13 @@ huggingface:
     max_retries: 3
     batch_size: 10
 
+# Ollama Settings
+ollama:
+  base_url: "http://localhost:11434"
+  disable_thinking: true  # Keeps short benchmarks answer-focused; set false for thinking experiments
+  gpt_oss_think_level: "low"  # GPT-OSS supports levels instead of boolean off
+  thinking_min_tokens: 128  # Minimum response budget when a thinking level is required
+
 # Evaluation Settings
 evaluation:
   default_samples: 100  # Number of samples to test per benchmark (reduce for faster testing)
