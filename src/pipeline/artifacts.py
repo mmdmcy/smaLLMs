@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -36,6 +37,38 @@ def _run_command(args: List[str]) -> str:
     if result.returncode != 0:
         return ""
     return result.stdout.strip()
+
+
+def _git_command() -> Optional[str]:
+    """Locate Git across common Windows and POSIX installs."""
+    discovered = shutil.which("git")
+    if discovered:
+        return discovered
+
+    for candidate in [
+        r"C:\Program Files\Git\cmd\git.exe",
+        r"C:\Program Files\Git\bin\git.exe",
+        r"C:\Program Files (x86)\Git\cmd\git.exe",
+        r"C:\Program Files (x86)\Git\bin\git.exe",
+    ]:
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
+def _ollama_command() -> Optional[str]:
+    """Locate Ollama for version metadata collection."""
+    discovered = shutil.which("ollama")
+    if discovered:
+        return discovered
+
+    for candidate in [
+        Path.home() / "AppData" / "Local" / "Programs" / "Ollama" / "ollama.exe",
+        Path(r"C:\Program Files\Ollama\ollama.exe"),
+    ]:
+        if candidate.exists():
+            return str(candidate)
+    return None
 
 
 def portable_path(value: str | Path) -> str:
@@ -222,13 +255,14 @@ class ArtifactStore:
 
 def collect_system_metadata() -> Dict[str, Any]:
     """Collect non-identifying system metadata for reproducible benchmark runs."""
+    ollama = _ollama_command()
     metadata = {
         "platform": platform.system(),
         "platform_release": platform.release(),
         "platform_version": platform.version(),
         "architecture": platform.machine(),
         "python_version": platform.python_version(),
-        "ollama_version": _run_command(["ollama", "--version"]),
+        "ollama_version": _run_command([ollama, "--version"]) if ollama else "",
     }
 
     try:
@@ -245,7 +279,7 @@ def collect_system_metadata() -> Dict[str, Any]:
     except ModuleNotFoundError:
         metadata.update(
             {
-                "cpu_count_logical": None,
+                "cpu_count_logical": os.cpu_count(),
                 "cpu_count_physical": None,
                 "memory_total_mb": None,
                 "system_metadata_warning": "psutil_not_installed",
@@ -258,9 +292,18 @@ def collect_system_metadata() -> Dict[str, Any]:
 def collect_repository_metadata(repo_root: str = ".") -> Dict[str, Any]:
     """Collect git metadata for reproducibility."""
     root = Path(repo_root)
-    git_sha = _run_command(["git", "-C", str(root), "rev-parse", "HEAD"])
-    git_branch = _run_command(["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"])
-    git_status = _run_command(["git", "-C", str(root), "status", "--short"])
+    git = _git_command()
+    if not git:
+        return {
+            "git_sha": "",
+            "git_branch": "",
+            "git_dirty": None,
+            "git_warning": "git_not_found",
+        }
+
+    git_sha = _run_command([git, "-C", str(root), "rev-parse", "HEAD"])
+    git_branch = _run_command([git, "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"])
+    git_status = _run_command([git, "-C", str(root), "status", "--short"])
     return {
         "git_sha": git_sha,
         "git_branch": git_branch,

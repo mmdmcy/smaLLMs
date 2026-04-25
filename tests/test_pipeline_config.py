@@ -11,8 +11,10 @@ from src.pipeline.config import (
     DEFAULT_LOCAL_SAMPLE_COUNT,
     DEFAULT_WEBSITE_EXPORT_DIR,
     DEFAULT_WEBSITE_SYNC_DIR,
+    config_fingerprint,
     load_pipeline_config,
     local_benchmark_settings,
+    redact_sensitive_config,
 )
 
 
@@ -47,6 +49,19 @@ class PipelineConfigTests(unittest.TestCase):
         self.assertEqual(settings["website_export_dir"], DEFAULT_WEBSITE_EXPORT_DIR)
         self.assertIsNone(settings["website_sync_dir"])
         self.assertEqual(settings["default_benchmarks"], ["gsm8k"])
+
+    def test_config_snapshot_redacts_secrets_before_fingerprinting(self) -> None:
+        config = {
+            "huggingface": {"token": "hf_real_token"},
+            "service": {"api_key": "abc123", "safe_value": "visible"},
+        }
+
+        redacted = redact_sensitive_config(config)
+
+        self.assertEqual(redacted["huggingface"]["token"], "<redacted>")
+        self.assertEqual(redacted["service"]["api_key"], "<redacted>")
+        self.assertEqual(redacted["service"]["safe_value"], "visible")
+        self.assertEqual(config_fingerprint(config), config_fingerprint(redacted))
 
 
 if __name__ == "__main__":

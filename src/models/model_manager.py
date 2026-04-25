@@ -47,6 +47,8 @@ class ModelInfo:
     local_path: Optional[str] = None
     family: str = "unknown"
     quantization: str = "unknown"
+    digest: str = ""
+    modified_at: str = ""
 
 @dataclass
 class GenerationConfig:
@@ -181,6 +183,7 @@ def _parse_ollama_list_output(stdout: str) -> List[Dict[str, Any]]:
             {
                 "name": name,
                 "provider": "ollama",
+                "source": "ollama_cli",
                 "size_gb": _parse_size_to_gb(size_token),
                 "supports_vision": supports_vision,
                 "model_type": "vision" if supports_vision else "text",
@@ -1155,6 +1158,8 @@ class OllamaModel(BaseModel):
             model_type="vision" if self.supports_vision else "text",
             family=self.metadata.get("family", "unknown"),
             quantization=self.metadata.get("quantization", "unknown"),
+            digest=self.metadata.get("digest", ""),
+            modified_at=self.metadata.get("modified_at", ""),
         )
     
     async def close(self):
@@ -1409,6 +1414,8 @@ class LMStudioModel(BaseModel):
             model_type="vision" if self.supports_vision else "text",
             family=self.metadata.get("family", "unknown"),
             quantization=self.metadata.get("quantization", "unknown"),
+            digest=self.metadata.get("digest", ""),
+            modified_at=self.metadata.get("modified_at", ""),
         )
     
     async def close(self):
@@ -1469,6 +1476,9 @@ class ModelManager:
                     {
                         'name': name,
                         'provider': 'ollama',
+                        'digest': model.get('digest', ''),
+                        'modified_at': model.get('modified_at', ''),
+                        'source': 'ollama_api',
                         'size_gb': round((model.get('size', 0) or 0) / (1024 ** 3), 3),
                         'supports_vision': supports_vision,
                         'model_type': 'vision' if supports_vision else 'text',
@@ -1568,6 +1578,8 @@ class ModelManager:
                             models.append({
                                 'name': name,
                                 'provider': 'lm_studio',
+                                'source': 'lm_studio_api',
+                                'modified_at': str(model.get('created', '')),
                                 'size_gb': 0,  # LM Studio doesn't provide size info easily
                                 'supports_vision': supports_vision,
                                 'model_type': 'vision' if supports_vision else 'text',

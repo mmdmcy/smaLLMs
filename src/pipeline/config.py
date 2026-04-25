@@ -4,6 +4,8 @@ Shared configuration defaults and schema versions for the modern local pipeline.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Sequence
@@ -22,6 +24,7 @@ DEFAULT_LOCAL_PROVIDER = "ollama"
 DEFAULT_LOCAL_SAMPLE_COUNT = 10
 DEFAULT_LOCAL_TEMPERATURE = 0.0
 DEFAULT_EXPORT_AFTER_RUN = True
+SENSITIVE_CONFIG_TOKENS = ("token", "secret", "password", "api_key", "apikey", "key")
 
 
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -33,6 +36,31 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
         else:
             merged[key] = deepcopy(value)
     return merged
+
+
+def redact_sensitive_config(value: Any) -> Any:
+    """Return a JSON-safe config snapshot with secrets replaced by placeholders."""
+    if isinstance(value, dict):
+        redacted: Dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            lowered = key_text.lower()
+            if any(token in lowered for token in SENSITIVE_CONFIG_TOKENS):
+                redacted[key_text] = "<redacted>" if item not in (None, "", []) else item
+            else:
+                redacted[key_text] = redact_sensitive_config(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_config(item) for item in value]
+    if isinstance(value, tuple):
+        return [redact_sensitive_config(item) for item in value]
+    return value
+
+
+def config_fingerprint(config: Dict[str, Any]) -> str:
+    """Return a stable SHA-256 fingerprint of the redacted effective config."""
+    payload = json.dumps(redact_sensitive_config(config), sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def default_local_benchmark_settings(default_benchmarks: Sequence[str]) -> Dict[str, Any]:

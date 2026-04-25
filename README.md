@@ -17,6 +17,7 @@ smaLLMs is built for:
 - cross-platform terminal use on macOS, Linux, Windows 11, and WSL
 - reproducible benchmark runs with per-sample artifacts
 - automatic benchmark dataset downloads with local caching outside the repo
+- explicit offline runs after the benchmark cache has been warmed
 
 Important distinction:
 - model inference is local-first through Ollama or LM Studio
@@ -25,6 +26,11 @@ Important distinction:
 - benchmark rows are cached outside the repo in a per-user cache directory, so the git repo itself stays small
 - generated benchmark artifacts and website export bundles are local outputs and stay gitignored by default
 - exported metadata avoids hostnames and other user-specific absolute path details
+
+The goal is not to replace broad hosted systems like HELM or lm-eval-harness. smaLLMs is deliberately
+focused on local, open-weight model evaluation where the run should be inspectable from one machine:
+local model inventory, warmed dataset cache, redacted config snapshot, git revision, system metadata,
+sample-level JSONL, and website-ready exports.
 
 ## What smaLLMs is trying to be
 
@@ -195,7 +201,7 @@ portui.cmd --list
 portui.cmd --run doctor
 ```
 
-The bundled actions cover the interactive launcher, setup check, doctor, model discovery, benchmark listing, quick suite, exports, sibling `websmaLLMs` sync, and the unit test suite. The manifest uses PortUI's built-in `{{projectDir}}`, `{{workspaceDir}}`, and path separator variables so the same action files work when the repo is moved or cloned elsewhere.
+The bundled actions cover the interactive launcher, setup check, doctor, model discovery, benchmark listing, quick suite, quick-suite cache warming, offline quick suite, exports, sibling `websmaLLMs` sync, and the unit test suite. The manifest uses PortUI's built-in `{{projectDir}}`, `{{workspaceDir}}`, and path separator variables so the same action files work when the repo is moved or cloned elsewhere.
 
 If you are developing the PortUI engine itself and have the sibling `portui` repo checked out next to `smaLLMs`, refresh the vendored runtime with:
 
@@ -231,6 +237,32 @@ model still returns an empty normal response, the runner records a `raw_fallback
 `used_raw_fallback` flag in the sample metadata and tries one raw-mode rescue request. A high raw
 fallback rate means the run is still fighting model formatting or token-budget behavior, so treat it
 as an artifact quality signal.
+
+Every run manifest includes reproducibility evidence:
+
+- selected model inventory, including Ollama digests when the local API exposes them
+- git commit, branch, and dirty-worktree state
+- operating system, Python, memory, CPU, and Ollama version metadata when available
+- redacted effective config snapshot plus a stable config SHA-256
+- dataset cache readiness, cache row counts, and cache file SHA-256 hashes
+- explicit execution policy showing whether remote dataset downloads were allowed
+
+## Offline workflow
+
+Warm the dataset cache once while online:
+
+```bash
+python smaLLMs.py cache --benchmarks quick_suite --samples 25
+```
+
+Then run without remote dataset downloads:
+
+```bash
+python smaLLMs.py run --benchmarks quick_suite --samples 25 --offline
+```
+
+In offline mode, smaLLMs fails before model execution if any selected benchmark lacks enough cached
+rows. Local Ollama or LM Studio HTTP calls are still allowed because those are the model runtime.
 
 ## Website workflow
 

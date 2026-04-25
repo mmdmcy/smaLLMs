@@ -19,6 +19,7 @@ from src.pipeline.artifacts import (
 )
 from src.pipeline.benchmarks import (
     DEFAULT_BENCHMARKS,
+    benchmark_cache_status,
     configure_dataset_runtime,
     dataset_runtime_info,
     expand_benchmark_selection,
@@ -35,8 +36,10 @@ from src.pipeline.config import (
     DEFAULT_LOCAL_SAMPLE_COUNT,
     DEFAULT_LOCAL_TEMPERATURE,
     DEFAULT_WEBSITE_EXPORT_DIR,
+    config_fingerprint,
     load_pipeline_config,
     local_benchmark_settings,
+    redact_sensitive_config,
 )
 
 
@@ -59,6 +62,8 @@ def _model_info_to_dict(info: ModelInfo) -> Dict[str, Any]:
         "model_type": info.model_type,
         "family": info.family,
         "quantization": info.quantization,
+        "digest": info.digest,
+        "modified_at": info.modified_at,
     }
 
 
@@ -95,6 +100,74 @@ class LocalBenchmarkOrchestrator:
 
         return [entry["name"] for entry in discovered.get(provider, [])]
 
+    def _configure_run_dataset_runtime(self, offline: Optional[bool] = None) -> Dict[str, Any]:
+        """Apply per-run dataset network policy and return the active runtime."""
+        if offline is not None:
+            self.local_settings["allow_remote_dataset_downloads"] = not offline
+        runtime = configure_dataset_runtime(self.local_settings)
+        self.local_settings["allow_remote_dataset_downloads"] = runtime["allow_remote_dataset_downloads"]
+        return runtime
+
+    def _portable_cache_status(self, statuses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Normalize cache status paths before persisting them in run manifests."""
+        normalized: List[Dict[str, Any]] = []
+        for status in statuses:
+            item = dict(status)
+            if item.get("rows_path"):
+                item["rows_path"] = portable_path(item["rows_path"])
+            if item.get("meta_path"):
+                item["meta_path"] = portable_path(item["meta_path"])
+            metadata = dict(item.get("metadata") or {})
+            if metadata.get("rows_path"):
+                metadata["rows_path"] = portable_path(metadata["rows_path"])
+            item["metadata"] = metadata
+            normalized.append(item)
+        return normalized
+
+    def _assert_offline_cache_ready(self, cache_statuses: List[Dict[str, Any]]) -> None:
+        """Fail early when an offline run would need uncached benchmark rows."""
+        missing = [status for status in cache_statuses if not status.get("ready")]
+        if not missing:
+            return
+
+        details = ", ".join(
+            f"{item['benchmark']} ({item['cached_rows']}/{item['requested_samples']} cached)"
+            for item in missing
+        )
+        raise RuntimeError(
+            "Offline run requested, but the benchmark cache is incomplete: "
+            f"{details}. Run `smaLLMs.py cache --benchmarks ... --samples ...` while online, "
+            "then rerun with `--offline`."
+        )
+
+    def _selected_model_inventory(
+        self,
+        discovered: Dict[str, List[Dict[str, Any]]],
+        resolved_models: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Return discovery metadata for selected models, preserving requested order."""
+        by_name: Dict[str, Dict[str, Any]] = {}
+        for provider, models in discovered.items():
+            for model in models:
+                entry = dict(model)
+                entry.setdefault("provider", provider)
+                by_name[entry.get("name", "")] = entry
+
+        inventory: List[Dict[str, Any]] = []
+        for name in resolved_models:
+            if name in by_name:
+                inventory.append(by_name[name])
+            else:
+                inventory.append(
+                    {
+                        "name": name,
+                        "provider": self.model_manager._detect_provider(name),
+                        "available": False,
+                        "metadata_warning": "not_returned_by_local_discovery",
+                    }
+                )
+        return inventory
+
     async def run(
         self,
         models: Optional[List[str]] = None,
@@ -103,9 +176,11 @@ class LocalBenchmarkOrchestrator:
         provider: Optional[str] = None,
         all_local: bool = False,
         export_after_run: Optional[bool] = None,
+        offline: Optional[bool] = None,
         progress_callback: ProgressCallback = None,
     ) -> Dict[str, Any]:
         """Run local benchmarks and optionally export the latest website bundle."""
+        dataset_runtime = self._configure_run_dataset_runtime(offline=offline)
         requested_benchmarks = benchmarks or list(self.local_settings.get("default_benchmarks", DEFAULT_BENCHMARKS))
         benchmark_names = expand_benchmark_selection(requested_benchmarks)
         sample_count = samples if samples is not None else int(
@@ -122,6 +197,16 @@ class LocalBenchmarkOrchestrator:
         if not resolved_models:
             raise RuntimeError("No local models resolved. Pull an Ollama model or pass --models explicitly.")
 
+        discovered_models = await self.discover_local_models()
+        cache_status = benchmark_cache_status(benchmark_names, sample_count)
+        if not dataset_runtime["allow_remote_dataset_downloads"]:
+            self._assert_offline_cache_ready(cache_status)
+
+        effective_config = dict(self.config)
+        effective_config["local_benchmarks"] = dict(self.local_settings)
+        redacted_config = redact_sensitive_config(effective_config)
+        manifest_dataset_runtime = dict(dataset_runtime)
+        manifest_dataset_runtime["cache_dir"] = portable_path(manifest_dataset_runtime["cache_dir"])
         created_at = utcnow_iso()
         manifest = {
             "created_at": created_at,
@@ -133,9 +218,25 @@ class LocalBenchmarkOrchestrator:
             "temperature": temperature,
             "supported_benchmarks": list_supported_benchmarks(),
             "benchmark_suites": list_benchmark_suites(),
-            "dataset_runtime": dataset_runtime_info(),
+            "execution_policy": {
+                "offline": not dataset_runtime["allow_remote_dataset_downloads"],
+                "remote_dataset_downloads_allowed": dataset_runtime["allow_remote_dataset_downloads"],
+                "network_scope": (
+                    "local_model_endpoints_and_cached_datasets"
+                    if not dataset_runtime["allow_remote_dataset_downloads"]
+                    else "local_model_endpoints_plus_dataset_cache_warmup"
+                ),
+            },
+            "dataset_runtime": manifest_dataset_runtime,
+            "dataset_cache": self._portable_cache_status(cache_status),
+            "model_inventory": self._selected_model_inventory(discovered_models, resolved_models),
             "system": collect_system_metadata(),
             "repository": collect_repository_metadata("."),
+            "config": {
+                "path": self.config_path,
+                "sha256": config_fingerprint(effective_config),
+                "snapshot": redacted_config,
+            },
             "config_path": self.config_path,
         }
         paths = self.artifact_store.create_run(manifest)
@@ -383,6 +484,8 @@ class LocalBenchmarkOrchestrator:
                     "model_type": result["model"].get("model_type", "text"),
                     "family": result["model"].get("family", "unknown"),
                     "quantization": result["model"].get("quantization", "unknown"),
+                    "digest": result["model"].get("digest", ""),
+                    "modified_at": result["model"].get("modified_at", ""),
                     "benchmarks": {},
                     "total_samples": 0,
                     "correct_count": 0,
@@ -502,6 +605,8 @@ class LocalBenchmarkOrchestrator:
                 "model_type": entry["model_type"],
                 "family": entry["family"],
                 "quantization": entry["quantization"],
+                "digest": entry["digest"],
+                "modified_at": entry["modified_at"],
                 "overall_accuracy": round(overall_accuracy, 4),
                 "success_rate": round(entry["success_count"] / total_samples_for_model, 4) if total_samples_for_model else 0.0,
                 "response_rate": round(entry["responded_count"] / total_samples_for_model, 4) if total_samples_for_model else 0.0,
