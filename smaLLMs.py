@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -89,7 +90,41 @@ class BeautifulSmaLLMsTerminal:
         self.run_id: str = ""
         self.samples_per_benchmark: int = 0
         self.render_started = False
+        self._alternate_screen_active = False
         self.start_time = time.time()
+        self._enable_virtual_terminal_sequences()
+
+    def _enable_virtual_terminal_sequences(self) -> None:
+        """Enable ANSI terminal control on supported Windows consoles."""
+        if os.name != "nt" or not self.is_tty:
+            return
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetStdHandle(-11)
+            mode = ctypes.c_uint()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        except Exception:
+            return
+
+    def enter_live_screen(self) -> None:
+        """Move live progress into the terminal's alternate screen buffer."""
+        if not self.is_tty or self._alternate_screen_active:
+            return
+        print("\033[?1049h\033[?25l\033[2J\033[H", end="")
+        sys.stdout.flush()
+        self._alternate_screen_active = True
+
+    def finish_live_screen(self) -> None:
+        """Restore the normal terminal buffer after live progress rendering."""
+        self.render_started = False
+        if not self.is_tty or not self._alternate_screen_active:
+            return
+        print("\033[?25h\033[?1049l", end="")
+        sys.stdout.flush()
+        self._alternate_screen_active = False
 
     def clear_screen(self) -> None:
         """Clear the screen only for interactive terminals."""
@@ -130,6 +165,7 @@ class BeautifulSmaLLMsTerminal:
                 )
 
         if self.is_tty:
+            self.enter_live_screen()
             self.render()
         else:
             print(f"Run ID: {run_id}")
@@ -580,19 +616,22 @@ class SmaLLMsCLI:
         run_id = f"pending_{int(time.time())}"
         self.terminal.start_run(run_id, models, expanded_benchmarks, sample_count)
 
-        result = await orchestrator.run(
-            models=models,
-            benchmarks=benchmark_selection,
-            samples=sample_count,
-            provider=default_provider,
-            all_local=all_local,
-            export_after_run=export_after_run,
-            progress_callback=self.terminal.handle_event,
-        )
+        try:
+            result = await orchestrator.run(
+                models=models,
+                benchmarks=benchmark_selection,
+                samples=sample_count,
+                provider=default_provider,
+                all_local=all_local,
+                export_after_run=export_after_run,
+                progress_callback=self.terminal.handle_event,
+            )
 
-        if self.terminal.is_tty:
-            self.terminal.run_id = result["run_id"]
-            self.terminal.render()
+            if self.terminal.is_tty:
+                self.terminal.run_id = result["run_id"]
+                self.terminal.render()
+        finally:
+            self.terminal.finish_live_screen()
 
         totals = result.get("summary", {}).get("totals", {})
         print(f"\n{self.terminal.BOLD}Run Complete{self.terminal.RESET}")

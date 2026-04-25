@@ -172,21 +172,36 @@ python3 smaLLMs.py export
 
 ## PortUI
 
-If you have the sibling `portui` repo checked out next to `smaLLMs`, you can use the PortUI app in [`portui/`](./portui) to drive the common cross-platform flows from one manifest-driven command surface.
+smaLLMs includes a project-local PortUI app in [`portui/`](./portui) plus vendored launcher wrappers, so the repo can expose the same command surface on Windows, macOS, Linux, and WSL without a global install.
 
 Linux or macOS:
 
 ```bash
-sh ../portui/portui.sh --manifest-dir ./portui
+sh ./portui.sh --list
+sh ./portui.sh --run doctor
 ```
 
 Windows:
 
 ```powershell
-..\portui\portui.ps1 -ManifestDir .\portui
+.\portui.ps1 -List
+.\portui.ps1 -Run doctor
 ```
 
-The bundled actions cover the launcher, setup check, doctor, model discovery, benchmark listing, quick suite, exports, sibling `websmaLLMs` sync, and the unit test suite.
+Command Prompt:
+
+```cmd
+portui.cmd --list
+portui.cmd --run doctor
+```
+
+The bundled actions cover the interactive launcher, setup check, doctor, model discovery, benchmark listing, quick suite, exports, sibling `websmaLLMs` sync, and the unit test suite. The manifest uses PortUI's built-in `{{projectDir}}`, `{{workspaceDir}}`, and path separator variables so the same action files work when the repo is moved or cloned elsewhere.
+
+If you are developing the PortUI engine itself and have the sibling `portui` repo checked out next to `smaLLMs`, refresh the vendored runtime with:
+
+```powershell
+..\portui\portui.ps1 -InstallProject .
+```
 
 ## Artifact outputs
 
