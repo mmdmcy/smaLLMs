@@ -13,6 +13,9 @@ huggingface:
 ollama:
   base_url: "http://localhost:11434"  # Default Ollama server
   auto_discovery: true  # Automatically discover installed models
+  disable_thinking: true  # Keeps short benchmarks answer-focused; set false for thinking experiments
+  gpt_oss_think_level: "low"  # GPT-OSS supports levels instead of boolean off
+  thinking_min_tokens: 128  # Minimum response budget when a thinking level is required
   timeout: 600  # 10 minutes for slow laptops (doubled)
   max_retries: 5  # More retries for unreliable hardware
   batch_delay: 5.0  # Longer delay for slower systems

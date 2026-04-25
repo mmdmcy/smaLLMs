@@ -575,6 +575,44 @@ class OllamaModel(BaseModel):
         except Exception as e:
             self.logger.error(f"Failed to encode image {image_path}: {e}")
             return ""
+
+    def _ollama_think_value(self) -> Optional[Union[bool, str]]:
+        """Return the Ollama thinking setting for normal benchmark requests."""
+        ollama_config = self.config.get("ollama", {})
+        if "think" in ollama_config:
+            return ollama_config["think"]
+        if not ollama_config.get("disable_thinking", True):
+            return None
+
+        lowered = self.model_name.lower()
+        if "gpt-oss" in lowered or "gptoss" in lowered:
+            return ollama_config.get("gpt_oss_think_level", "low")
+        return False
+
+    def _effective_max_tokens(
+        self,
+        generation_config: GenerationConfig,
+        think_value: Optional[Union[bool, str]],
+    ) -> int:
+        """Give forced-thinking models enough room to reach the answer channel."""
+        requested_tokens = generation_config.max_tokens
+        if isinstance(think_value, str):
+            minimum = int(self.config.get("ollama", {}).get("thinking_min_tokens", 128))
+            return max(requested_tokens, minimum)
+        return requested_tokens
+
+    def _generation_options(
+        self,
+        generation_config: GenerationConfig,
+        think_value: Optional[Union[bool, str]] = None,
+    ) -> Dict[str, Any]:
+        """Build common Ollama generation options."""
+        return {
+            "temperature": generation_config.temperature,
+            "num_predict": self._effective_max_tokens(generation_config, think_value),
+            "top_p": generation_config.top_p,
+            "stop": generation_config.stop_sequences or [],
+        }
     
     def _duration_ns_to_sec(self, value: Any) -> float:
         """Convert Ollama nanosecond duration values to seconds."""
@@ -683,21 +721,14 @@ class OllamaModel(BaseModel):
         payload = {
             "model": self.model_name,
             "prompt": prompt,
-            "options": {
-                "temperature": generation_config.temperature,
-                "num_predict": generation_config.max_tokens,
-                "top_p": generation_config.top_p,
-                "stop": generation_config.stop_sequences or [],
-            },
+            "options": self._generation_options(generation_config),
             "stream": False,
             "keep_alive": "10m",
         }
 
         if raw_mode:
-            # Some Ollama thinking-capable models spend their token budget in the hidden
-            # reasoning channel and leave `response` empty. Raw mode bypasses that template.
-            payload["raw"] = True
             payload["think"] = False
+            payload["raw"] = True
 
         if image_path and self.supports_vision:
             base64_image = self._encode_image(image_path)
@@ -705,6 +736,45 @@ class OllamaModel(BaseModel):
                 payload["images"] = [base64_image]
 
         return payload
+
+    def _build_chat_payload(
+        self,
+        prompt: str,
+        generation_config: GenerationConfig,
+        image_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Build an Ollama chat payload for normal benchmark generation."""
+        think_value = self._ollama_think_value()
+        message: Dict[str, Any] = {"role": "user", "content": prompt}
+        if image_path and self.supports_vision:
+            base64_image = self._encode_image(image_path)
+            if base64_image:
+                message["images"] = [base64_image]
+
+        payload = {
+            "model": self.model_name,
+            "messages": [message],
+            "options": self._generation_options(generation_config, think_value),
+            "stream": False,
+            "keep_alive": "10m",
+        }
+        if think_value is not None:
+            payload["think"] = think_value
+
+        return payload
+
+    def _normalize_chat_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Expose chat responses through the same keys used by generate responses."""
+        if result.get("error"):
+            return result
+
+        message = result.get("message") or {}
+        normalized = dict(result)
+        normalized["response"] = str(message.get("content") or result.get("response") or "")
+        thinking = message.get("thinking") or result.get("thinking")
+        if thinking:
+            normalized["thinking"] = str(thinking)
+        return normalized
 
     def _timeout_config(self) -> Dict[str, int]:
         """Return timeout and retry settings adapted to model size."""
@@ -726,13 +796,18 @@ class OllamaModel(BaseModel):
             "model_size_factor": model_size_factor,
         }
 
-    async def _request_generate_http(self, payload: Dict[str, Any], current_timeout: int) -> Dict[str, Any]:
-        """Call the Ollama HTTP API through the local Python process."""
+    async def _request_http(
+        self,
+        endpoint: str,
+        payload: Dict[str, Any],
+        current_timeout: int,
+    ) -> Dict[str, Any]:
+        """Call an Ollama HTTP endpoint through the local Python process."""
         if aiohttp is None:
             return {"response": "", "error": "aiohttp_not_installed"}
         session = await self._get_session()
         timeout = aiohttp.ClientTimeout(total=current_timeout)
-        async with session.post(f"{self.base_url}/api/generate", json=payload, timeout=timeout) as response:
+        async with session.post(f"{self.base_url}{endpoint}", json=payload, timeout=timeout) as response:
             if response.status == 404:
                 self.logger.error(f"Model {self.model_name} not found in Ollama. Is it pulled?")
                 return {"response": "", "error": "model_not_found"}
@@ -744,8 +819,21 @@ class OllamaModel(BaseModel):
             response.raise_for_status()
             return await response.json()
 
-    async def _request_generate_windows_curl(self, payload: Dict[str, Any], current_timeout: int) -> Dict[str, Any]:
-        """Call the Ollama HTTP API through Windows curl.exe when running in WSL."""
+    async def _request_generate_http(self, payload: Dict[str, Any], current_timeout: int) -> Dict[str, Any]:
+        """Call the Ollama generate API through the local Python process."""
+        return await self._request_http("/api/generate", payload, current_timeout)
+
+    async def _request_chat_http(self, payload: Dict[str, Any], current_timeout: int) -> Dict[str, Any]:
+        """Call the Ollama chat API through the local Python process."""
+        return self._normalize_chat_result(await self._request_http("/api/chat", payload, current_timeout))
+
+    async def _request_windows_curl(
+        self,
+        endpoint: str,
+        payload: Dict[str, Any],
+        current_timeout: int,
+    ) -> Dict[str, Any]:
+        """Call an Ollama HTTP endpoint through Windows curl.exe when running in WSL."""
         if not self.windows_curl:
             return {"response": "", "error": "windows_curl_not_found"}
 
@@ -756,7 +844,7 @@ class OllamaModel(BaseModel):
                 "-s",
                 "-X",
                 "POST",
-                f"{self.base_url}/api/generate",
+                f"{self.base_url}{endpoint}",
                 "-H",
                 "Content-Type: application/json",
                 "--data-binary",
@@ -774,6 +862,16 @@ class OllamaModel(BaseModel):
             return json.loads(result.stdout)
         except json.JSONDecodeError:
             return {"response": "", "error": "invalid_json_from_windows_curl", "raw_stdout": result.stdout}
+
+    async def _request_generate_windows_curl(self, payload: Dict[str, Any], current_timeout: int) -> Dict[str, Any]:
+        """Call the Ollama generate API through Windows curl.exe when running in WSL."""
+        return await self._request_windows_curl("/api/generate", payload, current_timeout)
+
+    async def _request_chat_windows_curl(self, payload: Dict[str, Any], current_timeout: int) -> Dict[str, Any]:
+        """Call the Ollama chat API through Windows curl.exe when running in WSL."""
+        return self._normalize_chat_result(
+            await self._request_windows_curl("/api/chat", payload, current_timeout)
+        )
 
     async def _request_generate_cli(
         self,
@@ -833,11 +931,12 @@ class OllamaModel(BaseModel):
                 )
 
                 attempt_metrics: List[Dict[str, Any]] = []
-                payload = self._build_payload(prompt, generation_config, image_path=image_path)
                 if transport == "http":
-                    result = await self._request_generate_http(payload, current_timeout)
+                    payload = self._build_chat_payload(prompt, generation_config, image_path=image_path)
+                    result = await self._request_chat_http(payload, current_timeout)
                 elif transport == "windows_curl":
-                    result = await self._request_generate_windows_curl(payload, current_timeout)
+                    payload = self._build_chat_payload(prompt, generation_config, image_path=image_path)
+                    result = await self._request_chat_windows_curl(payload, current_timeout)
                 else:
                     result = await self._request_generate_cli(
                         prompt,

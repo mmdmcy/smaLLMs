@@ -14,6 +14,9 @@ evaluation:
 # Ollama settings optimized for slow laptops
 ollama:
   base_url: "http://localhost:11434"
+  disable_thinking: true  # Keeps short benchmarks answer-focused; set false for thinking experiments
+  gpt_oss_think_level: "low"  # GPT-OSS supports levels instead of boolean off
+  thinking_min_tokens: 128  # Minimum response budget when a thinking level is required
   timeout: 900  # 15 minutes base timeout
   max_retries: 5
   batch_delay: 10.0  # 10 second delay between requests

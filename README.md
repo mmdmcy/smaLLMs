@@ -15,7 +15,7 @@ This repo is opinionated about scope:
 smaLLMs is built for:
 - local models running through Ollama or LM Studio
 - cross-platform terminal use on macOS, Linux, Windows 11, and WSL
-- reproducible benchmark runs with raw sample artifacts
+- reproducible benchmark runs with per-sample artifacts
 - automatic benchmark dataset downloads with local caching outside the repo
 
 Important distinction:
@@ -222,6 +222,15 @@ Useful files:
 - `leaderboard.csv`
 - `session.json` for the website
 - per-model/per-benchmark sample JSONL artifacts
+
+For Ollama runs, smaLLMs uses the chat API for normal benchmark requests and disables thinking where
+the model supports it, so short-answer tasks do not spend the entire output budget in hidden
+reasoning. GPT-OSS models cannot fully disable thinking in Ollama, so smaLLMs requests the `low`
+thinking level and raises the response budget enough for the final answer channel to appear. If a
+model still returns an empty normal response, the runner records a `raw_fallback_attempted` /
+`used_raw_fallback` flag in the sample metadata and tries one raw-mode rescue request. A high raw
+fallback rate means the run is still fighting model formatting or token-budget behavior, so treat it
+as an artifact quality signal.
 
 ## Website workflow
 
