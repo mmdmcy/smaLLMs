@@ -98,11 +98,13 @@ def configure_dataset_runtime(settings: Optional[Dict[str, Any]] = None) -> Dict
     configured_dir = settings.get("dataset_cache_dir")
     cache_dir = Path(configured_dir).expanduser() if configured_dir else _default_dataset_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
+    env_offline = os.getenv("SMALLMS_OFFLINE", "").strip().lower() in {"1", "true", "yes", "on"}
+    allow_remote = bool(settings.get("allow_remote_dataset_downloads", True)) and not env_offline
 
     global _DATASET_RUNTIME
     _DATASET_RUNTIME = DatasetRuntimeSettings(
         cache_dir=cache_dir,
-        allow_remote_downloads=bool(settings.get("allow_remote_dataset_downloads", True)),
+        allow_remote_downloads=allow_remote,
     )
     return dataset_runtime_info()
 
@@ -129,6 +131,41 @@ def _cache_paths(cache_key: str) -> Tuple[Path, Path]:
         _DATASET_RUNTIME.cache_dir / f"{slug}.jsonl",
         _DATASET_RUNTIME.cache_dir / f"{slug}.meta.json",
     )
+
+
+def _file_sha256(path: Path) -> Optional[str]:
+    """Return a file SHA-256 digest when the file exists."""
+    if not path.exists():
+        return None
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _count_jsonl_rows(path: Path) -> int:
+    """Count non-empty JSONL records without loading the full cache file."""
+    if not path.exists():
+        return 0
+
+    count = 0
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                count += 1
+    return count
+
+
+def _read_cache_metadata(path: Path) -> Dict[str, Any]:
+    """Read cache metadata if present and valid."""
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"metadata_warning": "unreadable_cache_metadata"}
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -175,8 +212,16 @@ def _write_cached_rows(cache_key: str, rows: Sequence[Dict[str, Any]], metadata:
         for row in safe_rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
+    rows_sha256 = _file_sha256(rows_path)
     payload = dict(metadata)
-    payload.update({"cache_key": cache_key, "cached_rows": len(safe_rows), "rows_path": str(rows_path)})
+    payload.update(
+        {
+            "cache_key": cache_key,
+            "cached_rows": len(safe_rows),
+            "rows_path": str(rows_path),
+            "rows_sha256": rows_sha256,
+        }
+    )
     with open(meta_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
 
@@ -2073,6 +2118,38 @@ def list_benchmark_suites() -> List[Dict[str, Any]]:
     ]
 
 
+def benchmark_cache_status(selection: Optional[Sequence[str]], samples: int) -> List[Dict[str, Any]]:
+    """Return cache readiness and fingerprints for selected benchmarks."""
+    benchmark_names = expand_benchmark_selection(selection)
+    statuses: List[Dict[str, Any]] = []
+
+    for benchmark_name in benchmark_names:
+        benchmark = get_supported_benchmark(benchmark_name)
+        rows_path, meta_path = _cache_paths(benchmark.key)
+        cached_rows = _count_jsonl_rows(rows_path)
+        cache_metadata = _read_cache_metadata(meta_path)
+        statuses.append(
+            {
+                "benchmark": benchmark.key,
+                "display_name": benchmark.display_name,
+                "dataset_name": benchmark.dataset_name,
+                "config_name": benchmark.config_name,
+                "split": benchmark.split,
+                "requested_samples": samples,
+                "cached_rows": cached_rows,
+                "ready": cached_rows >= samples,
+                "cache_key": benchmark.key,
+                "rows_path": str(rows_path),
+                "meta_path": str(meta_path),
+                "rows_sha256": _file_sha256(rows_path),
+                "meta_sha256": _file_sha256(meta_path),
+                "metadata": cache_metadata,
+            }
+        )
+
+    return statuses
+
+
 def warm_benchmark_cache(selection: Optional[Sequence[str]], samples: int) -> List[Dict[str, Any]]:
     """Fetch and cache benchmark rows for later low-network or offline runs."""
     benchmark_names = expand_benchmark_selection(selection)
@@ -2081,17 +2158,8 @@ def warm_benchmark_cache(selection: Optional[Sequence[str]], samples: int) -> Li
     for benchmark_name in benchmark_names:
         benchmark = get_supported_benchmark(benchmark_name)
         rows = benchmark.load_rows(samples)
-        rows_path, meta_path = _cache_paths(benchmark.key)
-        prepared.append(
-            {
-                "benchmark": benchmark.key,
-                "display_name": benchmark.display_name,
-                "requested_samples": samples,
-                "cached_rows": len(rows),
-                "rows_path": str(rows_path),
-                "meta_path": str(meta_path),
-                "ready": len(rows) >= samples,
-            }
-        )
+        status = benchmark_cache_status([benchmark.key], samples)[0]
+        status["loaded_rows"] = len(rows)
+        prepared.append(status)
 
     return prepared

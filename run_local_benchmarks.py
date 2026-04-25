@@ -36,6 +36,7 @@ async def _handle_run(args: argparse.Namespace) -> None:
         provider=args.provider,
         all_local=args.all_local,
         export_after_run=not args.no_export,
+        offline=args.offline,
     )
 
     summary = result["summary"]
@@ -64,10 +65,14 @@ def _handle_benchmarks(_: argparse.Namespace) -> None:
 
 
 def _handle_cache(args: argparse.Namespace) -> None:
-    from src.pipeline.benchmarks import dataset_runtime_info, warm_benchmark_cache
+    from src.pipeline.benchmarks import configure_dataset_runtime, dataset_runtime_info, warm_benchmark_cache
     from src.pipeline.orchestrator import LocalBenchmarkOrchestrator
 
     orchestrator = LocalBenchmarkOrchestrator(config_path=args.config)
+    if args.offline:
+        orchestrator.local_settings["allow_remote_dataset_downloads"] = False
+    runtime = configure_dataset_runtime(orchestrator.local_settings)
+    orchestrator.local_settings["allow_remote_dataset_downloads"] = runtime["allow_remote_dataset_downloads"]
     sample_count = args.samples if args.samples is not None else int(orchestrator.local_settings["default_samples"])
     prepared = warm_benchmark_cache(_parse_list(args.benchmarks), sample_count)
     print(json.dumps({"dataset_runtime": dataset_runtime_info(), "prepared": prepared}, indent=2))
@@ -103,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--provider", choices=["ollama", "lm_studio"], help="Discovery provider when --models is omitted.")
     run_parser.add_argument("--all-local", action="store_true", help="Run across all discovered local models.")
     run_parser.add_argument("--no-export", action="store_true", help="Skip website export after the run.")
+    run_parser.add_argument("--offline", action="store_true", help="Disallow remote dataset downloads; require warmed benchmark cache.")
     run_parser.set_defaults(handler=_handle_run)
 
     discover_parser = subparsers.add_parser("discover", help="Print discovered local models.")
@@ -114,6 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
     cache_parser = subparsers.add_parser("cache", help="Warm the local benchmark dataset cache.")
     cache_parser.add_argument("--benchmarks", nargs="*", help="Benchmark keys or suite names to cache.")
     cache_parser.add_argument("--samples", type=int, help="Rows to cache per benchmark. Defaults to local_benchmarks.default_samples.")
+    cache_parser.add_argument("--offline", action="store_true", help="Validate local cache readiness without downloading datasets.")
     cache_parser.set_defaults(handler=_handle_cache)
 
     export_parser = subparsers.add_parser("export", help="Export website files for a run.")

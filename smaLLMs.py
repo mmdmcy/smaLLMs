@@ -19,6 +19,7 @@ sys.path.append(str(Path(__file__).parent))
 
 from src.pipeline.benchmarks import (
     DEFAULT_BENCHMARKS,
+    configure_dataset_runtime,
     dataset_runtime_info,
     expand_benchmark_selection,
     list_benchmark_suites,
@@ -498,9 +499,16 @@ class SmaLLMsCLI:
         benchmarks: Optional[List[str]] = None,
         samples: Optional[int] = None,
         json_output: bool = False,
+        offline: bool = False,
     ) -> List[Dict[str, Any]]:
         """Warm the benchmark sample cache outside the repository."""
         self._get_orchestrator()
+        if offline:
+            self.local_settings["allow_remote_dataset_downloads"] = False
+            self.orchestrator.local_settings["allow_remote_dataset_downloads"] = False
+        dataset_runtime = configure_dataset_runtime(self.local_settings)
+        self.local_settings["allow_remote_dataset_downloads"] = dataset_runtime["allow_remote_dataset_downloads"]
+        self.orchestrator.local_settings["allow_remote_dataset_downloads"] = dataset_runtime["allow_remote_dataset_downloads"]
         benchmark_selection = benchmarks or list(self.local_settings.get("default_benchmarks", DEFAULT_BENCHMARKS))
         sample_count = samples if samples is not None else int(
             self.local_settings.get("default_samples", DEFAULT_LOCAL_SAMPLE_COUNT)
@@ -594,6 +602,7 @@ class SmaLLMsCLI:
         samples: Optional[int] = None,
         export_after_run: Optional[bool] = None,
         all_local: bool = False,
+        offline: bool = False,
     ) -> Dict[str, Any]:
         """Run benchmarks with the live terminal renderer attached."""
         benchmark_selection = benchmarks or list(self.local_settings.get("default_benchmarks", DEFAULT_BENCHMARKS))
@@ -624,6 +633,7 @@ class SmaLLMsCLI:
                 provider=default_provider,
                 all_local=all_local,
                 export_after_run=export_after_run,
+                offline=offline,
                 progress_callback=self.terminal.handle_event,
             )
 
@@ -668,7 +678,7 @@ class SmaLLMsCLI:
             export_after_run=True,
         )
 
-    async def run_quick(self, samples: int = 3) -> Dict[str, Any]:
+    async def run_quick(self, samples: int = 3, offline: bool = False) -> Dict[str, Any]:
         """Run the default core suite with a small sample count."""
         return await self.run_benchmarks(
             models=None,
@@ -676,6 +686,7 @@ class SmaLLMsCLI:
             samples=samples,
             export_after_run=True,
             all_local=True,
+            offline=offline,
         )
 
     def run_interactive(self) -> None:
@@ -758,6 +769,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--samples", type=int, help="Samples per benchmark.")
     parser.add_argument("--all-local", action="store_true", help="Run across all discovered local models.")
     parser.add_argument("--no-export", action="store_true", help="Skip website export after a run.")
+    parser.add_argument("--offline", action="store_true", help="Disallow remote dataset downloads; require warmed benchmark cache.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON for doctor/discover/benchmarks/status.")
     parser.add_argument("--run-id", help="Run id for export; defaults to the latest run.")
     parser.add_argument("--sync-dir", help="Optional website public/data directory to mirror the exported session bundle into.")
@@ -784,7 +796,7 @@ def main() -> None:
         elif command == "benchmarks":
             app.show_benchmarks(json_output=args.json)
         elif command == "cache":
-            app.warm_dataset_cache(benchmarks=benchmarks, samples=args.samples, json_output=args.json)
+            app.warm_dataset_cache(benchmarks=benchmarks, samples=args.samples, json_output=args.json, offline=args.offline)
         elif command in {"run", "local-run"}:
             asyncio.run(
                 app.run_benchmarks(
@@ -793,10 +805,11 @@ def main() -> None:
                     samples=args.samples,
                     export_after_run=not args.no_export,
                     all_local=args.all_local,
+                    offline=args.offline,
                 )
             )
         elif command == "quick":
-            asyncio.run(app.run_quick(samples=args.samples or 3))
+            asyncio.run(app.run_quick(samples=args.samples or 3, offline=args.offline))
         elif command == "status":
             app.show_status(json_output=args.json)
         elif command == "export":
