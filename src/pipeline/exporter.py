@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.pipeline.artifacts import ArtifactStore, portable_path, safe_slug, sanitize_system_metadata, utcnow_iso
-from src.pipeline.benchmarks import summarize_samples
+from src.pipeline.benchmarks import summarize_samples, wilson_interval
 from src.pipeline.config import (
     DEFAULT_ARTIFACTS_DIR,
     DEFAULT_WEBSITE_EXPORT_DIR,
@@ -204,7 +204,8 @@ class WebsiteExporter:
                     sample.get("parsed_prediction_chars") or len(str(sample.get("parsed_prediction") or ""))
                 )
                 sample["evaluation_id"] = evaluation_id
-                sample["sample_id"] = f"{evaluation_id}::{sample_index}"
+                sample.setdefault("sample_id", f"{evaluation_id}::{sample_index}")
+                sample["export_sample_id"] = f"{evaluation_id}::{sample_index}"
                 samples.append(sample)
 
         return samples
@@ -355,6 +356,8 @@ class WebsiteExporter:
                     "success_count": 0,
                     "responded_count": 0,
                     "error_count": 0,
+                    "valid_prediction_count": 0,
+                    "invalid_prediction_count": 0,
                     "raw_fallback_count": 0,
                     "raw_fallback_attempted_count": 0,
                     "total_prompt_tokens": 0,
@@ -382,6 +385,8 @@ class WebsiteExporter:
             entry["success_count"] += int(metrics.get("success_count", 0))
             entry["responded_count"] += int(metrics.get("responded_count", 0))
             entry["error_count"] += int(metrics.get("error_count", 0))
+            entry["valid_prediction_count"] += int(metrics.get("valid_prediction_count", 0))
+            entry["invalid_prediction_count"] += int(metrics.get("invalid_prediction_count", 0))
             entry["raw_fallback_count"] += int(metrics.get("raw_fallback_count", 0))
             entry["raw_fallback_attempted_count"] += int(metrics.get("raw_fallback_attempted_count", 0))
             entry["total_prompt_tokens"] += int(metrics.get("total_prompt_tokens", 0))
@@ -415,8 +420,19 @@ class WebsiteExporter:
             sample_count = int(entry.get("total_samples", 0))
             row = dict(entry)
             row["overall_accuracy"] = round(row["correct_count"] / sample_count, 4) if sample_count else 0.0
+            row["overall_accuracy_ci95_low"], row["overall_accuracy_ci95_high"] = wilson_interval(
+                int(row["correct_count"]),
+                sample_count,
+            )
             row["success_rate"] = round(row["success_count"] / sample_count, 4) if sample_count else 0.0
             row["response_rate"] = round(row["responded_count"] / sample_count, 4) if sample_count else 0.0
+            row["invalid_prediction_rate"] = (
+                round(row["invalid_prediction_count"] / sample_count, 4) if sample_count else 0.0
+            )
+            row["invalid_prediction_rate_ci95_low"], row["invalid_prediction_rate_ci95_high"] = wilson_interval(
+                int(row["invalid_prediction_count"]),
+                sample_count,
+            )
             row["raw_fallback_rate"] = round(row["raw_fallback_count"] / sample_count, 4) if sample_count else 0.0
             row["raw_fallback_attempted_rate"] = (
                 round(row["raw_fallback_attempted_count"] / sample_count, 4) if sample_count else 0.0
@@ -471,6 +487,12 @@ class WebsiteExporter:
             correct_count = sum(int(item.get("metrics", {}).get("correct_count", 0)) for item in evaluations)
             success_count = sum(int(item.get("metrics", {}).get("success_count", 0)) for item in evaluations)
             responded_count = sum(int(item.get("metrics", {}).get("responded_count", 0)) for item in evaluations)
+            valid_prediction_count = sum(
+                int(item.get("metrics", {}).get("valid_prediction_count", 0)) for item in evaluations
+            )
+            invalid_prediction_count = sum(
+                int(item.get("metrics", {}).get("invalid_prediction_count", 0)) for item in evaluations
+            )
             error_count = sum(int(item.get("metrics", {}).get("error_count", 0)) for item in evaluations)
             raw_fallback_count = sum(int(item.get("metrics", {}).get("raw_fallback_count", 0)) for item in evaluations)
             raw_fallback_attempted_count = sum(
@@ -526,10 +548,17 @@ class WebsiteExporter:
                     "samples": sample_count,
                     "correct": correct_count,
                     "accuracy": round(correct_count / sample_count, 4) if sample_count else 0.0,
+                    "accuracy_ci95_low": wilson_interval(correct_count, sample_count)[0],
+                    "accuracy_ci95_high": wilson_interval(correct_count, sample_count)[1],
                     "success": success_count,
                     "success_rate": round(success_count / sample_count, 4) if sample_count else 0.0,
                     "responded": responded_count,
                     "response_rate": round(responded_count / sample_count, 4) if sample_count else 0.0,
+                    "valid_predictions": valid_prediction_count,
+                    "invalid_predictions": invalid_prediction_count,
+                    "invalid_prediction_rate": round(invalid_prediction_count / sample_count, 4) if sample_count else 0.0,
+                    "invalid_prediction_rate_ci95_low": wilson_interval(invalid_prediction_count, sample_count)[0],
+                    "invalid_prediction_rate_ci95_high": wilson_interval(invalid_prediction_count, sample_count)[1],
                     "raw_fallback_count": raw_fallback_count,
                     "raw_fallback_rate": round(raw_fallback_count / sample_count, 4) if sample_count else 0.0,
                     "raw_fallback_attempted_count": raw_fallback_attempted_count,

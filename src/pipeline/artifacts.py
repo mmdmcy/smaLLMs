@@ -196,6 +196,12 @@ class ArtifactStore:
         self._write_latest_run_id(paths.run_id)
         return paths.summary_path
 
+    def write_run_card(self, paths: RunPaths, content: str) -> Path:
+        """Persist a human-readable run card next to the machine artifacts."""
+        file_path = paths.run_dir / "RUN_CARD.md"
+        file_path.write_text(content, encoding="utf-8")
+        return file_path
+
     def latest_run_id(self) -> Optional[str]:
         """Return the most recently completed run id."""
         latest_file = self.base_dir / "latest_run.txt"

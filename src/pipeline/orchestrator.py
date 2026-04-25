@@ -26,6 +26,7 @@ from src.pipeline.benchmarks import (
     get_supported_benchmark,
     list_benchmark_suites,
     list_supported_benchmarks,
+    wilson_interval,
 )
 from src.pipeline.config import (
     ARTIFACT_SCHEMA_VERSION,
@@ -268,6 +269,8 @@ class LocalBenchmarkOrchestrator:
                     )
                     benchmark_results.append(benchmark_result)
             summary = self._build_run_summary(paths, benchmark_results)
+            run_card_path = self.artifact_store.write_run_card(paths, self._build_run_card(paths, manifest, summary))
+            summary["run_card_path"] = portable_path(run_card_path)
             self.artifact_store.write_summary(paths, summary)
         finally:
             await self.model_manager.cleanup()
@@ -283,6 +286,93 @@ class LocalBenchmarkOrchestrator:
             exporter.export_run(paths.run_id)
 
         return self.artifact_store.load_run(paths.run_id)
+
+    def _build_run_card(self, paths: RunPaths, manifest: Dict[str, Any], summary: Dict[str, Any]) -> str:
+        """Create a compact human-readable report for one benchmark run."""
+        totals = summary.get("totals", {})
+        policy = manifest.get("execution_policy", {})
+        repository = manifest.get("repository", {})
+        system = manifest.get("system", {})
+        config = manifest.get("config", {})
+        cache_rows = manifest.get("dataset_cache", [])
+        leaderboard = summary.get("leaderboard", [])
+
+        lines = [
+            f"# smaLLMs Run Card: {paths.run_id}",
+            "",
+            "## Result",
+            "",
+            f"- Accuracy: {totals.get('accuracy', 0.0):.4f} "
+            f"(95% CI {totals.get('accuracy_ci95_low', 0.0):.4f}-{totals.get('accuracy_ci95_high', 0.0):.4f})",
+            f"- Samples: {totals.get('samples', 0)}",
+            f"- Models: {totals.get('models', 0)}",
+            f"- Benchmarks: {totals.get('benchmarks', 0)}",
+            f"- Response rate: {totals.get('response_rate', 0.0):.4f}",
+            f"- Invalid prediction rate: {totals.get('invalid_prediction_rate', 0.0):.4f}",
+            f"- Raw fallback rate: {totals.get('raw_fallback_rate', 0.0):.4f}",
+            "",
+            "## Execution Policy",
+            "",
+            f"- Offline: {bool(policy.get('offline'))}",
+            f"- Remote dataset downloads allowed: {bool(policy.get('remote_dataset_downloads_allowed'))}",
+            f"- Network scope: {policy.get('network_scope', 'unknown')}",
+            "",
+            "## Reproducibility",
+            "",
+            f"- Git SHA: {repository.get('git_sha', '')}",
+            f"- Git branch: {repository.get('git_branch', '')}",
+            f"- Git dirty: {repository.get('git_dirty')}",
+            f"- Config SHA-256: {config.get('sha256', '')}",
+            f"- Python: {system.get('python_version', '')}",
+            f"- Ollama: {system.get('ollama_version', '')}",
+            "",
+            "## Leaderboard",
+            "",
+            "| Rank | Model | Accuracy | 95% CI | Invalid | Raw Fallback | Avg Latency |",
+            "| ---: | --- | ---: | --- | ---: | ---: | ---: |",
+        ]
+
+        for row in leaderboard:
+            lines.append(
+                "| {rank} | {model} | {acc:.4f} | {low:.4f}-{high:.4f} | {invalid:.4f} | {raw:.4f} | {lat:.4f}s |".format(
+                    rank=row.get("rank", ""),
+                    model=row.get("model_name", ""),
+                    acc=float(row.get("overall_accuracy", 0.0)),
+                    low=float(row.get("overall_accuracy_ci95_low", 0.0)),
+                    high=float(row.get("overall_accuracy_ci95_high", 0.0)),
+                    invalid=float(row.get("invalid_prediction_rate", 0.0)),
+                    raw=float(row.get("raw_fallback_rate", 0.0)),
+                    lat=float(row.get("avg_latency_sec", 0.0)),
+                )
+            )
+
+        lines.extend(["", "## Dataset Cache", ""])
+        if cache_rows:
+            lines.extend(
+                [
+                    "| Benchmark | Ready | Cached Rows | Requested | Rows SHA-256 |",
+                    "| --- | ---: | ---: | ---: | --- |",
+                ]
+            )
+            for item in cache_rows:
+                lines.append(
+                    "| {benchmark} | {ready} | {cached} | {requested} | `{sha}` |".format(
+                        benchmark=item.get("benchmark", ""),
+                        ready=str(bool(item.get("ready"))).lower(),
+                        cached=item.get("cached_rows", 0),
+                        requested=item.get("requested_samples", 0),
+                        sha=str(item.get("rows_sha256") or "")[:16],
+                    )
+                )
+        else:
+            lines.append("No dataset cache metadata recorded.")
+
+        lines.extend(["", "## Artifact Pointers", ""])
+        lines.append(f"- Manifest: {portable_path(paths.manifest_path)}")
+        lines.append(f"- Summary: {portable_path(paths.summary_path)}")
+        lines.append(f"- Samples: {portable_path(paths.sample_dir)}")
+        lines.append("")
+        return "\n".join(lines)
 
     async def _run_single_benchmark(
         self,
@@ -334,6 +424,13 @@ class LocalBenchmarkOrchestrator:
                     "success_rate": 0.0,
                     "responded_count": 0,
                     "response_rate": 0.0,
+                    "valid_prediction_count": 0,
+                    "invalid_prediction_count": 0,
+                    "invalid_prediction_rate": 0.0,
+                    "invalid_prediction_rate_ci95_low": 0.0,
+                    "invalid_prediction_rate_ci95_high": 0.0,
+                    "accuracy_ci95_low": 0.0,
+                    "accuracy_ci95_high": 0.0,
                     "raw_fallback_count": 0,
                     "raw_fallback_rate": 0.0,
                     "raw_fallback_attempted_count": 0,
@@ -421,6 +518,8 @@ class LocalBenchmarkOrchestrator:
         total_errors = 0
         total_success = 0
         total_responded = 0
+        total_valid_predictions = 0
+        total_invalid_predictions = 0
         total_raw_fallback_count = 0
         total_raw_fallback_attempted_count = 0
         total_prompt_tokens = 0
@@ -458,6 +557,8 @@ class LocalBenchmarkOrchestrator:
             total_errors += int(metrics.get("error_count", 0))
             total_success += int(metrics.get("success_count", 0))
             total_responded += int(metrics.get("responded_count", 0))
+            total_valid_predictions += int(metrics.get("valid_prediction_count", 0))
+            total_invalid_predictions += int(metrics.get("invalid_prediction_count", 0))
             total_raw_fallback_count += int(metrics.get("raw_fallback_count", 0))
             total_raw_fallback_attempted_count += int(metrics.get("raw_fallback_attempted_count", 0))
             total_prompt_tokens += int(metrics.get("total_prompt_tokens", 0))
@@ -492,6 +593,8 @@ class LocalBenchmarkOrchestrator:
                     "error_count": 0,
                     "success_count": 0,
                     "responded_count": 0,
+                    "valid_prediction_count": 0,
+                    "invalid_prediction_count": 0,
                     "raw_fallback_count": 0,
                     "raw_fallback_attempted_count": 0,
                     "total_prompt_tokens": 0,
@@ -518,6 +621,9 @@ class LocalBenchmarkOrchestrator:
                 "correct_count": metrics.get("correct_count", 0),
                 "success_count": metrics.get("success_count", 0),
                 "responded_count": metrics.get("responded_count", 0),
+                "valid_prediction_count": metrics.get("valid_prediction_count", 0),
+                "invalid_prediction_count": metrics.get("invalid_prediction_count", 0),
+                "invalid_prediction_rate": metrics.get("invalid_prediction_rate", 0.0),
                 "raw_fallback_count": metrics.get("raw_fallback_count", 0),
                 "raw_fallback_rate": metrics.get("raw_fallback_rate", 0.0),
                 "raw_fallback_attempted_count": metrics.get("raw_fallback_attempted_count", 0),
@@ -564,6 +670,8 @@ class LocalBenchmarkOrchestrator:
             entry["error_count"] += int(metrics.get("error_count", 0))
             entry["success_count"] += int(metrics.get("success_count", 0))
             entry["responded_count"] += int(metrics.get("responded_count", 0))
+            entry["valid_prediction_count"] += int(metrics.get("valid_prediction_count", 0))
+            entry["invalid_prediction_count"] += int(metrics.get("invalid_prediction_count", 0))
             entry["raw_fallback_count"] += int(metrics.get("raw_fallback_count", 0))
             entry["raw_fallback_attempted_count"] += int(metrics.get("raw_fallback_attempted_count", 0))
             entry["total_prompt_tokens"] += int(metrics.get("total_prompt_tokens", 0))
@@ -593,6 +701,14 @@ class LocalBenchmarkOrchestrator:
             total_samples_for_model = entry["total_samples"]
             overall_accuracy = entry["correct_count"] / total_samples_for_model if total_samples_for_model else 0.0
             avg_latency_sec = entry["total_latency_sec"] / total_samples_for_model if total_samples_for_model else 0.0
+            model_accuracy_ci_low, model_accuracy_ci_high = wilson_interval(
+                entry["correct_count"],
+                total_samples_for_model,
+            )
+            model_invalid_ci_low, model_invalid_ci_high = wilson_interval(
+                entry["invalid_prediction_count"],
+                total_samples_for_model,
+            )
             row = {
                 "model_name": entry["model_name"],
                 "provider": entry["provider"],
@@ -608,6 +724,8 @@ class LocalBenchmarkOrchestrator:
                 "digest": entry["digest"],
                 "modified_at": entry["modified_at"],
                 "overall_accuracy": round(overall_accuracy, 4),
+                "overall_accuracy_ci95_low": model_accuracy_ci_low,
+                "overall_accuracy_ci95_high": model_accuracy_ci_high,
                 "success_rate": round(entry["success_count"] / total_samples_for_model, 4) if total_samples_for_model else 0.0,
                 "response_rate": round(entry["responded_count"] / total_samples_for_model, 4) if total_samples_for_model else 0.0,
                 "benchmarks_run": len(entry["benchmarks"]),
@@ -616,6 +734,13 @@ class LocalBenchmarkOrchestrator:
                 "error_count": entry["error_count"],
                 "success_count": entry["success_count"],
                 "responded_count": entry["responded_count"],
+                "valid_prediction_count": entry["valid_prediction_count"],
+                "invalid_prediction_count": entry["invalid_prediction_count"],
+                "invalid_prediction_rate": round(entry["invalid_prediction_count"] / total_samples_for_model, 4)
+                if total_samples_for_model
+                else 0.0,
+                "invalid_prediction_rate_ci95_low": model_invalid_ci_low,
+                "invalid_prediction_rate_ci95_high": model_invalid_ci_high,
                 "raw_fallback_count": entry["raw_fallback_count"],
                 "raw_fallback_rate": round(entry["raw_fallback_count"] / total_samples_for_model, 4)
                 if total_samples_for_model
@@ -685,6 +810,8 @@ class LocalBenchmarkOrchestrator:
         for index, row in enumerate(leaderboard_rows, start=1):
             row["rank"] = index
 
+        total_accuracy_ci_low, total_accuracy_ci_high = wilson_interval(total_correct, total_samples)
+        total_invalid_ci_low, total_invalid_ci_high = wilson_interval(total_invalid_predictions, total_samples)
         return {
             "schema_version": ARTIFACT_SCHEMA_VERSION,
             "run_id": paths.run_id,
@@ -699,10 +826,17 @@ class LocalBenchmarkOrchestrator:
                 "samples": total_samples,
                 "correct": total_correct,
                 "accuracy": round(total_correct / total_samples, 4) if total_samples else 0.0,
+                "accuracy_ci95_low": total_accuracy_ci_low,
+                "accuracy_ci95_high": total_accuracy_ci_high,
                 "success": total_success,
                 "success_rate": round(total_success / total_samples, 4) if total_samples else 0.0,
                 "responded": total_responded,
                 "response_rate": round(total_responded / total_samples, 4) if total_samples else 0.0,
+                "valid_predictions": total_valid_predictions,
+                "invalid_predictions": total_invalid_predictions,
+                "invalid_prediction_rate": round(total_invalid_predictions / total_samples, 4) if total_samples else 0.0,
+                "invalid_prediction_rate_ci95_low": total_invalid_ci_low,
+                "invalid_prediction_rate_ci95_high": total_invalid_ci_high,
                 "raw_fallback_count": total_raw_fallback_count,
                 "raw_fallback_rate": round(total_raw_fallback_count / total_samples, 4) if total_samples else 0.0,
                 "raw_fallback_attempted_count": total_raw_fallback_attempted_count,

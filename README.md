@@ -246,6 +246,18 @@ Every run manifest includes reproducibility evidence:
 - redacted effective config snapshot plus a stable config SHA-256
 - dataset cache readiness, cache row counts, and cache file SHA-256 hashes
 - explicit execution policy showing whether remote dataset downloads were allowed
+- prompt template IDs, prompt template SHA-256 hashes, prompt SHA-256 hashes, and stable sample IDs
+
+Every run summary and benchmark result also reports:
+
+- accuracy with Wilson 95% confidence intervals
+- response rate and invalid-prediction rate
+- valid/invalid parsed prediction counts separate from provider errors
+- raw fallback rate as a model formatting and provider-path quality signal
+
+Each run directory includes a human-readable `RUN_CARD.md` next to the JSON artifacts. The run card
+summarizes the result, confidence intervals, offline policy, git/config/system fingerprints, cache
+hashes, and leaderboard rows in one reviewable Markdown report.
 
 ## Offline workflow
 
