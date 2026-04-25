@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -182,6 +183,21 @@ def _to_jsonable(value: Any) -> Any:
         except Exception:
             pass
     return str(value)
+
+
+def _stable_json(value: Any) -> str:
+    """Serialize a value deterministically for artifact fingerprints."""
+    return json.dumps(_to_jsonable(value), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _sha256_text(value: str) -> str:
+    """Return a SHA-256 digest for UTF-8 text."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _stable_sha256(value: Any) -> str:
+    """Return a stable SHA-256 digest for a JSON-like value."""
+    return _sha256_text(_stable_json(value))
 
 
 def _read_cached_rows(cache_key: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -671,6 +687,22 @@ def _math_equal(left: str, right: str) -> bool:
     return _normalize_text_answer(left) == _normalize_text_answer(right)
 
 
+def wilson_interval(successes: int, total: int, z: float = 1.96) -> Tuple[float, float]:
+    """Return a Wilson score interval for a binomial proportion."""
+    if total <= 0:
+        return 0.0, 0.0
+
+    phat = successes / total
+    denominator = 1 + (z * z / total)
+    center = (phat + (z * z / (2 * total))) / denominator
+    margin = (
+        z
+        * math.sqrt((phat * (1 - phat) / total) + (z * z / (4 * total * total)))
+        / denominator
+    )
+    return round(max(0.0, center - margin), 4), round(min(1.0, center + margin), 4)
+
+
 def summarize_samples(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Aggregate per-sample records into benchmark-level metrics."""
     def used_raw_fallback(sample: Dict[str, Any]) -> bool:
@@ -701,11 +733,18 @@ def summarize_samples(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
                 values.append(candidate)
         return values
 
+    def prediction_valid(sample: Dict[str, Any]) -> bool:
+        if "prediction_valid" in sample:
+            return bool(sample.get("prediction_valid"))
+        return bool(str(sample.get("parsed_prediction") or "").strip())
+
     sample_count = len(samples)
     correct_count = sum(1 for sample in samples if sample.get("is_correct"))
     total_errors = sum(1 for sample in samples if sample.get("error"))
     successful_count = sum(1 for sample in samples if not sample.get("error"))
     responded_count = sum(1 for sample in samples if str(sample.get("response_text") or "").strip())
+    valid_prediction_count = sum(1 for sample in samples if prediction_valid(sample))
+    invalid_prediction_count = sample_count - valid_prediction_count
     raw_fallback_count = sum(1 for sample in samples if used_raw_fallback(sample))
     raw_fallback_attempted_count = sum(1 for sample in samples if raw_fallback_attempted(sample))
     total_prompt_tokens = sum(int(sample.get("prompt_tokens") or 0) for sample in samples)
@@ -741,14 +780,30 @@ def summarize_samples(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
     def max_value(values: List[float] | List[int]) -> float:
         return round(float(max(values)), 4) if values else 0.0
 
+    accuracy_ci_low, accuracy_ci_high = wilson_interval(correct_count, sample_count)
+    success_ci_low, success_ci_high = wilson_interval(successful_count, sample_count)
+    response_ci_low, response_ci_high = wilson_interval(responded_count, sample_count)
+    invalid_ci_low, invalid_ci_high = wilson_interval(invalid_prediction_count, sample_count)
+
     return {
         "sample_count": sample_count,
         "correct_count": correct_count,
         "accuracy": round(correct_count / sample_count, 4) if sample_count else 0.0,
+        "accuracy_ci95_low": accuracy_ci_low,
+        "accuracy_ci95_high": accuracy_ci_high,
         "success_count": successful_count,
         "success_rate": round(successful_count / sample_count, 4) if sample_count else 0.0,
+        "success_rate_ci95_low": success_ci_low,
+        "success_rate_ci95_high": success_ci_high,
         "responded_count": responded_count,
         "response_rate": round(responded_count / sample_count, 4) if sample_count else 0.0,
+        "response_rate_ci95_low": response_ci_low,
+        "response_rate_ci95_high": response_ci_high,
+        "valid_prediction_count": valid_prediction_count,
+        "invalid_prediction_count": invalid_prediction_count,
+        "invalid_prediction_rate": round(invalid_prediction_count / sample_count, 4) if sample_count else 0.0,
+        "invalid_prediction_rate_ci95_low": invalid_ci_low,
+        "invalid_prediction_rate_ci95_high": invalid_ci_high,
         "raw_fallback_count": raw_fallback_count,
         "raw_fallback_rate": round(raw_fallback_count / sample_count, 4) if sample_count else 0.0,
         "raw_fallback_attempted_count": raw_fallback_attempted_count,
@@ -845,6 +900,7 @@ class DatasetBenchmark(ABC):
     description: str
     category: str = "general"
     max_tokens: int = 128
+    prompt_template_version: str = "1"
 
     def cache_metadata(self) -> Dict[str, Any]:
         """Return metadata stored alongside the cached JSONL rows."""
@@ -853,6 +909,19 @@ class DatasetBenchmark(ABC):
             "dataset_name": self.dataset_name,
             "config_name": self.config_name,
             "split": self.split,
+        }
+
+    def prompt_template_metadata(self) -> Dict[str, str]:
+        """Return prompt-template identity and source hash for comparability checks."""
+        try:
+            source = inspect.getsource(type(self).build_prompt)
+        except (OSError, TypeError):
+            source = f"{type(self).__module__}.{type(self).__name__}.build_prompt"
+
+        return {
+            "prompt_template_id": f"{self.key}:{type(self).__name__}.build_prompt",
+            "prompt_template_version": self.prompt_template_version,
+            "prompt_template_sha256": _sha256_text(source),
         }
 
     def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
@@ -884,6 +953,10 @@ class DatasetBenchmark(ABC):
         """Compare a prediction and reference answer."""
         return predicted == expected
 
+    def is_prediction_valid(self, predicted: str, row: Dict[str, Any]) -> bool:
+        """Return whether the parser produced an auditable benchmark answer."""
+        return bool(str(predicted or "").strip())
+
     async def evaluate(
         self,
         model: Any,
@@ -895,6 +968,7 @@ class DatasetBenchmark(ABC):
     ) -> BenchmarkExecution:
         """Evaluate a model on this benchmark and return summary plus samples."""
         rows = self.load_rows(num_samples)
+        prompt_template = self.prompt_template_metadata()
 
         generation_config = LocalGenerationConfig(
             temperature=temperature,
@@ -908,11 +982,14 @@ class DatasetBenchmark(ABC):
         running_errors = 0
 
         for index, row in enumerate(rows):
+            row_sha256 = _stable_sha256(row)
             prompt = self.build_prompt(row)
+            prompt_sha256 = _sha256_text(prompt)
             expected = self.extract_expected_answer(row)
             generation = await model.generate_with_metadata(prompt, generation_config)
             predicted = self.parse_prediction(generation.text, row)
-            correct = self.is_correct(predicted, expected)
+            prediction_valid = self.is_prediction_valid(predicted, row)
+            correct = self.is_correct(predicted, expected) if prediction_valid else False
             error = generation.raw.get("error") if generation.raw else None
 
             if correct:
@@ -924,12 +1001,19 @@ class DatasetBenchmark(ABC):
                 "run_id": run_id,
                 "benchmark_name": self.key,
                 "sample_index": index,
+                "sample_id": f"{self.key}:{row_sha256[:16]}",
+                "sample_input_sha256": row_sha256,
                 "model_name": model_info["name"],
                 "provider": model_info["provider"],
                 "prompt": prompt,
+                "prompt_sha256": prompt_sha256,
+                "prompt_template_id": prompt_template["prompt_template_id"],
+                "prompt_template_version": prompt_template["prompt_template_version"],
+                "prompt_template_sha256": prompt_template["prompt_template_sha256"],
                 "response_text": generation.text,
                 "expected_answer": expected,
                 "parsed_prediction": predicted,
+                "prediction_valid": prediction_valid,
                 "prompt_chars": len(prompt),
                 "response_chars": len(generation.text),
                 "expected_answer_chars": len(expected),
@@ -983,6 +1067,7 @@ class DatasetBenchmark(ABC):
                 "config_name": self.config_name,
                 "split": self.split,
             },
+            "prompt": prompt_template,
             "model": model_info,
             "metrics": metrics,
             "status": "completed",
