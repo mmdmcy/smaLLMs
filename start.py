@@ -159,6 +159,7 @@ def main() -> int:
 
     print("smaLLMs launcher")
     print("----------------")
+    sys.stdout.flush()
 
     python_executable = _ensure_runtime_python(repo_root)
     missing_modules = _missing_modules_for_python(python_executable)
@@ -168,6 +169,7 @@ def main() -> int:
     print("")
     for line in build_setup_report_lines(report):
         print(line)
+    sys.stdout.flush()
 
     cli_args = list(args.cli_args)
     if cli_args[:1] == ["--"]:
@@ -179,6 +181,7 @@ def main() -> int:
     if cli_args:
         print("")
         print(f"Running smaLLMs.py {' '.join(cli_args)} ...")
+        sys.stdout.flush()
         result = subprocess.run(
             [str(python_executable), str(repo_root / "smaLLMs.py"), *cli_args],
             cwd=repo_root,
@@ -188,6 +191,7 @@ def main() -> int:
 
     print("")
     print("Opening the arrow-key menu ...")
+    sys.stdout.flush()
     result = subprocess.run(
         [str(python_executable), str(repo_root / "smaLLMs.py"), "menu"],
         cwd=repo_root,
