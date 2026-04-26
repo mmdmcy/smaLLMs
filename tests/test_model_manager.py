@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import unittest
+from unittest import mock
 
 from src.models.model_manager import GenerationConfig, OllamaModel
 
@@ -52,6 +54,23 @@ class OllamaPayloadTests(unittest.TestCase):
 
         self.assertIs(payload["think"], False)
         self.assertIs(payload["raw"], True)
+
+    def test_closed_ollama_session_is_recreated(self) -> None:
+        class ClosedSession:
+            closed = True
+
+        class OpenSession:
+            closed = False
+
+        model = OllamaModel("qwen3.5:latest", {"ollama": {}}, metadata={})
+        model.session = ClosedSession()
+        replacement = OpenSession()
+
+        with mock.patch("src.models.model_manager.aiohttp.ClientSession", return_value=replacement):
+            session = asyncio.run(model._get_session())
+
+        self.assertIs(session, replacement)
+        self.assertIs(model.session, replacement)
 
 
 if __name__ == "__main__":

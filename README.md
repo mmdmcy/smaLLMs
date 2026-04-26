@@ -141,6 +141,16 @@ The default interface is terminal-native:
 - `requirements.txt` is the standard local install for normal users.
 - `requirements-dev.txt` is only for development work on the repo.
 
+## Testing
+
+Use the root test runner as the canonical local and CI entrypoint:
+
+```bash
+python test_everything.py
+```
+
+It discovers every test under `tests/` and is the same path used by GitHub Actions and the PortUI test action.
+
 ## Non-interactive CLI
 
 The advanced commands are still available, but they are optional now.

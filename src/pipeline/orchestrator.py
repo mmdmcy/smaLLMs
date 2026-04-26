@@ -505,8 +505,6 @@ class LocalBenchmarkOrchestrator:
             failure["artifact_paths"] = {"benchmark_json": portable_path(failure_file)}
             self.artifact_store.write_benchmark_result(paths, benchmark_name, model_name, failure)
             return failure
-        finally:
-            await self.model_manager.cleanup()
 
     def _build_run_summary(self, paths: RunPaths, benchmark_results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Create an aggregate run summary plus per-model leaderboard."""

@@ -20,6 +20,10 @@ from abc import ABC, abstractmethod
 import logging
 from datetime import datetime, timezone
 
+from src.utils.env import huggingface_token, load_repository_env
+
+load_repository_env()
+
 try:
     import aiohttp
 except ModuleNotFoundError:
@@ -321,7 +325,7 @@ class HuggingFaceModel(BaseModel):
                 "huggingface_hub is not installed. Install the full requirements or avoid Hugging Face models."
             )
         hf_config = config.get('huggingface', {})
-        self.token = hf_config.get('token')
+        self.token = huggingface_token(hf_config.get('token'))
         
         # Use the modern InferenceClient for Inference Providers
         self.client = InferenceClient(
@@ -513,7 +517,7 @@ class OllamaModel(BaseModel):
         """Get or create aiohttp session."""
         if aiohttp is None:
             raise RuntimeError("aiohttp is not installed. Install local requirements for direct HTTP model access.")
-        if self.session is None:
+        if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession()
         return self.session
     
@@ -1187,7 +1191,7 @@ class LMStudioModel(BaseModel):
         """Get or create aiohttp session."""
         if aiohttp is None:
             raise RuntimeError("aiohttp is not installed. LM Studio support needs local requirements.")
-        if self.session is None:
+        if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession()
         return self.session
     
@@ -1714,9 +1718,12 @@ class ModelManager:
     
     async def cleanup(self):
         """Cleanup all model instances."""
-        for model in self.models.values():
+        for model in list(self.models.values()):
             if hasattr(model, 'close'):
-                await model.close()
+                try:
+                    await model.close()
+                except Exception as exc:
+                    self.logger.warning("Error while closing model %s: %s", getattr(model, "model_name", "unknown"), exc)
         self.models.clear()
 
 # Confirmed working instruction-tuned models (Chat Completion API compatible)

@@ -40,6 +40,13 @@ class LauncherTests(unittest.TestCase):
                 self.assertTrue(start._current_python_matches(link_python))
                 self.assertFalse(start._current_python_matches(real_python))
 
+    def test_subprocess_keyboard_interrupt_returns_cancelled_code(self) -> None:
+        with mock.patch.object(start.subprocess, "run", side_effect=KeyboardInterrupt):
+            with mock.patch("builtins.print"):
+                code = start._run_smaLLMs_subprocess(Path("python"), Path("."), ["menu"])
+
+        self.assertEqual(code, 130)
+
 
 if __name__ == "__main__":
     unittest.main()

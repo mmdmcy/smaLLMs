@@ -53,6 +53,32 @@ class BenchmarkCatalogTests(unittest.TestCase):
         self.assertIn("graphwalks_parents_0_128k", expanded)
         self.assertIn("mrcr_v2_8needle_8k_16k", expanded)
 
+    def test_all_alias_expands_to_every_runnable_benchmark(self) -> None:
+        expanded = expand_benchmark_selection(["all"])
+        self.assertEqual(expanded, list(SUPPORTED_BENCHMARKS))
+
+    def test_social_iqa_uses_scriptless_parquet_revision(self) -> None:
+        benchmark = SUPPORTED_BENCHMARKS["social_iqa"]
+        self.assertEqual(benchmark.dataset_name, "allenai/social_i_qa")
+        self.assertEqual(benchmark.dataset_revision, "refs/convert/parquet")
+
+    def test_mrcr_uses_8needle_parquet_files_directly(self) -> None:
+        benchmark = SUPPORTED_BENCHMARKS["mrcr_v2_8needle_4k_8k"]
+        self.assertEqual(benchmark.dataset_loader_name, "parquet")
+        self.assertEqual(
+            benchmark.dataset_data_files,
+            {
+                "train": [
+                    "https://huggingface.co/datasets/openai/mrcr/resolve/main/8needle/8needle_0.parquet",
+                    "https://huggingface.co/datasets/openai/mrcr/resolve/main/8needle/8needle_1.parquet",
+                ]
+            },
+        )
+
+    def test_mrcr_context_bands_compare_against_character_counts(self) -> None:
+        self.assertEqual(SUPPORTED_BENCHMARKS["mrcr_v2_8needle_4k_8k"].min_chars, 16384)
+        self.assertEqual(SUPPORTED_BENCHMARKS["mrcr_v2_8needle_64k_128k"].max_chars, 524288)
+
     def test_tracked_only_benchmark_raises_helpful_error(self) -> None:
         with self.assertRaises(ValueError) as context:
             expand_benchmark_selection(["tau_bench"])
