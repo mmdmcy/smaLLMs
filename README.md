@@ -93,6 +93,9 @@ Windows 11:
 py -3 start.py
 ```
 
+If the Python launcher is not available, run the script with whichever Python 3.10+
+interpreter you use locally.
+
 or double-click:
 
 ```powershell
@@ -111,6 +114,18 @@ The launcher does the user-friendly path automatically:
 - checks Ollama and LM Studio status
 - tells you whether existing Ollama models were already found
 - opens the arrow-key terminal UI
+
+### Optional: install the CLI in editable mode
+
+For development or repeated use:
+
+```bash
+python -m pip install -e .
+smallms doctor
+smallms benchmarks
+```
+
+The `smallms` console command maps to the same maintained CLI as `python smaLLMs.py`.
 
 ### 2. If you already have Ollama models installed
 
@@ -269,6 +284,9 @@ Each run directory includes a human-readable `RUN_CARD.md` next to the JSON arti
 summarizes the result, confidence intervals, offline policy, git/config/system fingerprints, cache
 hashes, and leaderboard rows in one reviewable Markdown report.
 
+See [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) for the evaluation methodology and run-card
+publishing workflow.
+
 ## Offline workflow
 
 Warm the dataset cache once while online:
@@ -331,7 +349,7 @@ Runnable suites currently include:
 
 ## Project principles
 
-- Local-first: evaluate models on the user’s own hardware.
+- Local-first: evaluate models on the user's own hardware.
 - CLI-first: the terminal is the primary maintained product surface.
 - Supported means runnable now.
 - Open artifacts: every run should be exportable and inspectable.
@@ -344,6 +362,11 @@ Runnable suites currently include:
 - A fully offline run is possible only after the needed benchmark rows have already been cached locally.
 - The standard local install is intentionally small; use `requirements-dev.txt` only if you need the broader development environment.
 - Results are only as comparable as the local runtime settings and hardware conditions you keep consistent.
+
+## Legacy code
+
+Older experimental evaluator, web UI, and exporter code lives under [`legacy/`](legacy/). It is kept
+for history, but the maintained product surface is the CLI-first pipeline documented above.
 
 ## Short roadmap
 

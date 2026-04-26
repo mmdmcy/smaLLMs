@@ -277,11 +277,11 @@ class BeautifulSmaLLMsTerminal:
 
         progress = (completed / total) if total else 0.0
         filled = int(40 * progress)
-        bar = f"{self.GREEN}{'█' * filled}{self.GRAY}{'░' * (40 - filled)}{self.RESET}"
+        bar = f"{self.GREEN}{'#' * filled}{self.GRAY}{'.' * (40 - filled)}{self.RESET}"
         print(f"\n{bar} {progress * 100:.0f}% ({completed}/{total} completed)")
         print(
-            f"{self.BOLD}Overall:{self.RESET} {total_samples_done}/{total_samples} samples • "
-            f"{accuracy * 100:.1f}% correct • {sum(row.errors for row in self.rows.values())} errors"
+            f"{self.BOLD}Overall:{self.RESET} {total_samples_done}/{total_samples} samples | "
+            f"{accuracy * 100:.1f}% correct | {sum(row.errors for row in self.rows.values())} errors"
         )
         sys.stdout.flush()
 
@@ -327,10 +327,10 @@ class SmaLLMsCLI:
         default_benchmarks = ", ".join(self.local_settings.get("default_benchmarks", DEFAULT_BENCHMARKS))
         print(
             f"""
-{self.terminal.CYAN}╔══════════════════════════════════════════════════════════════════════════════╗
-║                          {self.terminal.BOLD}smaLLMs Local CLI{self.terminal.RESET}{self.terminal.CYAN}                                   ║
-║                  {self.terminal.GRAY}Cross-platform local LLM benchmark runner{self.terminal.RESET}{self.terminal.CYAN}                   ║
-╚══════════════════════════════════════════════════════════════════════════════╝{self.terminal.RESET}
+{self.terminal.CYAN}+------------------------------------------------------------------------------+{self.terminal.RESET}
+{self.terminal.CYAN}|                          {self.terminal.BOLD}smaLLMs Local CLI{self.terminal.RESET}{self.terminal.CYAN}                                   |{self.terminal.RESET}
+{self.terminal.CYAN}|                  {self.terminal.GRAY}Cross-platform local LLM benchmark runner{self.terminal.RESET}{self.terminal.CYAN}                   |{self.terminal.RESET}
+{self.terminal.CYAN}+------------------------------------------------------------------------------+{self.terminal.RESET}
 
 {self.terminal.BOLD}Commands:{self.terminal.RESET}
   {self.terminal.GREEN}doctor{self.terminal.RESET}     - Check Ollama / LM Studio status and next steps

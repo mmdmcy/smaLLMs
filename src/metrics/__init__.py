@@ -1,1 +1,1 @@
-# Metrics package
+"""Reserved package for shared metric extensions."""
