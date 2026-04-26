@@ -129,6 +129,7 @@ class TerminalMenuApp:
 
     def __init__(self, app: Any) -> None:
         self.app = app
+        self._alternate_screen_active = False
         self._enable_virtual_terminal_sequences()
 
     def run(self) -> None:
@@ -137,7 +138,7 @@ class TerminalMenuApp:
             raise TerminalMenuError("Arrow-key mode requires an interactive TTY.")
 
         with CrossPlatformKeyReader() as reader:
-            self._hide_cursor()
+            self._enter_screen()
             try:
                 while True:
                     action = self._select_main_action(reader)
@@ -158,8 +159,7 @@ class TerminalMenuApp:
             except KeyboardInterrupt:
                 pass
             finally:
-                self._show_cursor()
-                self._clear_screen()
+                self._exit_screen()
 
     def _select_main_action(self, reader: CrossPlatformKeyReader) -> str:
         options = [
@@ -288,7 +288,7 @@ class TerminalMenuApp:
         if not confirmed:
             return
 
-        self._clear_screen()
+        self._exit_screen()
         try:
             asyncio.run(
                 self.app.run_benchmarks(
@@ -302,6 +302,7 @@ class TerminalMenuApp:
             self._wait_for_key(reader, "Run finished. Press any key to return to the menu.")
         except (KeyboardInterrupt, asyncio.CancelledError):
             self.app.terminal.finish_live_screen()
+            self._enter_screen()
             self._show_message(
                 reader,
                 title="Run Cancelled",
@@ -312,6 +313,7 @@ class TerminalMenuApp:
                 ],
             )
         except Exception as exc:
+            self._enter_screen()
             self._show_message(
                 reader,
                 title="Run Failed",
@@ -321,6 +323,8 @@ class TerminalMenuApp:
                     "The live run renderer exited early. Review the terminal output or logs and retry.",
                 ],
             )
+        else:
+            self._enter_screen()
 
     def _benchmark_scope_options(self) -> List[MenuOption]:
         """Build benchmark suite options from the shared catalog."""
@@ -527,39 +531,45 @@ class TerminalMenuApp:
         multi_select: bool,
     ) -> None:
         self._clear_screen()
-        width = max(72, min(shutil.get_terminal_size((120, 40)).columns, 140))
-        print(
-            f"{self.CYAN}+{'-' * (width - 2)}+{self.RESET}\n"
-            f"{self.CYAN}| {self.BOLD}{title}{self.RESET}{self.CYAN}{' ' * max(0, width - len(title) - 3)}|{self.RESET}\n"
-            f"{self.CYAN}+{'-' * (width - 2)}+{self.RESET}"
-        )
-        print(f"{self.GRAY}{subtitle}{self.RESET}\n")
+        width = max(72, min(shutil.get_terminal_size((120, 40)).columns, 120))
+        rule = "-" * min(width - 4, 88)
+        print()
+        print(f"  {self.BOLD}{title}{self.RESET}")
+        if subtitle:
+            print(f"  {self.GRAY}{self._fit_text(subtitle, width - 4)}{self.RESET}")
+        print(f"  {rule}")
 
         start, end = self._window_bounds(cursor, len(options), max_visible=12)
+        if start > 0:
+            print(f"  {self.GRAY}more above{self.RESET}")
         for idx in range(start, end):
             option = options[idx]
             is_cursor = idx == cursor
-            cursor_prefix = f"{self.CYAN}>{self.RESET}" if is_cursor else " "
+            cursor_prefix = ">" if is_cursor else " "
             if multi_select:
                 checkbox = "[x]" if selected and option.value in selected else "[ ]"
                 marker = checkbox
             else:
                 marker = "-"
 
-            label_color = self.YELLOW if is_cursor else self.WHITE
+            label_color = self.WHITE
             if option.disabled:
                 label_color = self.GRAY
 
-            print(f"{cursor_prefix} {label_color}{marker} {option.label}{self.RESET}")
+            line = self._fit_text(f"{cursor_prefix} {marker} {option.label}", width - 4)
+            if is_cursor:
+                print(f"  \033[7m{line:<{width - 4}}\033[0m")
+            else:
+                print(f"  {label_color}{line}{self.RESET}")
             if option.hint:
-                print(f"    {self.GRAY}{option.hint}{self.RESET}")
+                print(f"    {self.GRAY}{self._fit_text(option.hint, width - 6)}{self.RESET}")
 
         if end < len(options):
-            print(f"\n{self.GRAY}... more options below ...{self.RESET}")
+            print(f"  {self.GRAY}more below{self.RESET}")
 
-        footer = "Use arrow keys to move, Enter to confirm, Q or Esc to go back."
+        footer = "Up/Down move | Enter confirm | Q/Esc back"
         if multi_select:
-            footer = "Use arrow keys to move, Space to toggle, A to select all, Enter to confirm, Q or Esc to go back."
+            footer = "Up/Down move | Space toggle | A all | Enter confirm | Q/Esc back"
         print(f"\n{self.GRAY}{footer}{self.RESET}")
         if multi_select:
             print(f"{self.GRAY}Selected: {len(selected or set())}{self.RESET}")
@@ -567,9 +577,10 @@ class TerminalMenuApp:
 
     def _show_message(self, reader: CrossPlatformKeyReader, title: str, lines: Sequence[str]) -> None:
         self._clear_screen()
-        print(f"{self.BOLD}{title}{self.RESET}\n")
+        print()
+        print(f"  {self.BOLD}{title}{self.RESET}\n")
         for line in lines:
-            print(line)
+            print(f"  {line}" if line else "")
         self._wait_for_key(reader, "\nPress any key to return.")
 
     def _wait_for_key(self, reader: CrossPlatformKeyReader, prompt: str) -> None:
@@ -621,6 +632,25 @@ class TerminalMenuApp:
         if quantization and quantization != "unknown":
             details.append(str(quantization))
         return " | ".join(details)
+
+    def _fit_text(self, text: str, width: int) -> str:
+        if width <= 3 or len(text) <= width:
+            return text
+        return f"{text[: width - 3]}..."
+
+    def _enter_screen(self) -> None:
+        if self._alternate_screen_active:
+            return
+        print("\033[?1049h\033[?25l", end="")
+        sys.stdout.flush()
+        self._alternate_screen_active = True
+
+    def _exit_screen(self) -> None:
+        if not self._alternate_screen_active:
+            return
+        print("\033[?25h\033[?1049l", end="")
+        sys.stdout.flush()
+        self._alternate_screen_active = False
 
     def _clear_screen(self) -> None:
         print("\033[2J\033[H", end="")
