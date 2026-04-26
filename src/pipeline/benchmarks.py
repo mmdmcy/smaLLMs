@@ -12,10 +12,13 @@ import logging
 import math
 import os
 import re
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+
+from src.utils.env import load_repository_env
 
 
 ProgressCallback = Optional[Callable[[Dict[str, Any]], None]]
@@ -25,6 +28,7 @@ LOGGER = logging.getLogger(__name__)
 # uses for a more space-efficient cache layout. Caching still works, so silence the
 # repeated warning and keep the benchmark UX clean by default.
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+load_repository_env()
 
 
 @dataclass
@@ -169,6 +173,19 @@ def _read_cache_metadata(path: Path) -> Dict[str, Any]:
         return {"metadata_warning": "unreadable_cache_metadata"}
 
 
+def _cache_metadata_matches(actual: Dict[str, Any], expected: Dict[str, Any]) -> bool:
+    """Return whether cached rows were built for the current adapter settings."""
+    if not actual:
+        return False
+
+    for key, expected_value in expected.items():
+        if expected_value is None:
+            continue
+        if _to_jsonable(actual.get(key)) != _to_jsonable(expected_value):
+            return False
+    return True
+
+
 def _to_jsonable(value: Any) -> Any:
     """Convert dataset rows into JSON-safe plain Python values."""
     if value is None or isinstance(value, (str, int, float, bool)):
@@ -249,28 +266,78 @@ def _load_rows_with_cache(
     metadata: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     """Reuse cached rows when possible, otherwise fetch once and persist them locally."""
-    cached_rows = _read_cached_rows(cache_key, limit=limit)
+    rows_path, meta_path = _cache_paths(cache_key)
+    cache_metadata = _read_cache_metadata(meta_path)
+    cached_rows = (
+        _read_cached_rows(cache_key, limit=limit)
+        if _cache_metadata_matches(cache_metadata, metadata)
+        else []
+    )
     if len(cached_rows) >= limit:
         return cached_rows[:limit]
 
     if not _DATASET_RUNTIME.allow_remote_downloads:
-        rows_path, _ = _cache_paths(cache_key)
         raise RuntimeError(
             f"Benchmark '{cache_key}' needs {limit} cached row(s), but only {len(cached_rows)} are available in "
             f"{rows_path}. Re-enable remote dataset downloads once, or warm the cache while online."
         )
 
-    rows = loader(limit)
+    rows: List[Dict[str, Any]] = []
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            rows = loader(limit)
+            break
+        except Exception as exc:
+            if attempt >= max_attempts - 1 or not _is_transient_dataset_error(exc):
+                raise
+            wait_seconds = attempt + 1
+            _reset_huggingface_http_session()
+            LOGGER.warning(
+                "Transient dataset load error for %s: %s. Retrying in %ss.",
+                cache_key,
+                exc,
+                wait_seconds,
+            )
+            time.sleep(wait_seconds)
     if rows:
         _write_cached_rows(cache_key, rows, metadata)
         LOGGER.info("Cached %s row(s) for benchmark %s in %s", len(rows), cache_key, _cache_paths(cache_key)[0])
     return rows
 
 
+def _reset_huggingface_http_session() -> None:
+    """Drop the shared HF Hub HTTP client after a transient closed-client error."""
+    try:
+        from huggingface_hub.utils._http import close_session
+
+        close_session()
+    except Exception:
+        return
+
+
+def _is_transient_dataset_error(exc: Exception) -> bool:
+    """Return True for network/cache errors worth retrying during dataset fetch."""
+    message = str(exc).lower()
+    transient_markers = (
+        "client has been closed",
+        "server disconnected",
+        "connection reset",
+        "connection aborted",
+        "winerror 10054",
+        "temporarily unavailable",
+        "read timed out",
+        "readtimeout",
+    )
+    return any(marker in message for marker in transient_markers)
+
+
 def _safe_load_dataset(
     dataset_name: str,
     config_name: Optional[str],
     split: str,
+    revision: Optional[str] = None,
+    data_files: Optional[Any] = None,
 ) -> Iterable[Dict[str, Any]]:
     """Load a dataset in streaming mode to keep local runs lightweight."""
     from datasets import load_dataset
@@ -280,6 +347,11 @@ def _safe_load_dataset(
         "streaming": True,
         "download_mode": "reuse_cache_if_exists",
     }
+    if revision:
+        kwargs["revision"] = revision
+    if data_files is not None:
+        kwargs["data_files"] = data_files
+        kwargs["cache_dir"] = str(_DATASET_RUNTIME.cache_dir / "hf_datasets")
 
     if not _DATASET_RUNTIME.allow_remote_downloads:
         raise RuntimeError(
@@ -901,6 +973,9 @@ class DatasetBenchmark(ABC):
     category: str = "general"
     max_tokens: int = 128
     prompt_template_version: str = "1"
+    dataset_revision: Optional[str] = None
+    dataset_loader_name: Optional[str] = None
+    dataset_data_files: Optional[Any] = None
 
     def cache_metadata(self) -> Dict[str, Any]:
         """Return metadata stored alongside the cached JSONL rows."""
@@ -909,6 +984,9 @@ class DatasetBenchmark(ABC):
             "dataset_name": self.dataset_name,
             "config_name": self.config_name,
             "split": self.split,
+            "revision": self.dataset_revision,
+            "loader_name": self.dataset_loader_name,
+            "data_files": self.dataset_data_files,
         }
 
     def prompt_template_metadata(self) -> Dict[str, str]:
@@ -926,7 +1004,13 @@ class DatasetBenchmark(ABC):
 
     def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
         """Load rows directly from the upstream dataset source."""
-        dataset = _safe_load_dataset(self.dataset_name, self.config_name, self.split)
+        dataset = _safe_load_dataset(
+            self.dataset_loader_name or self.dataset_name,
+            self.config_name,
+            self.split,
+            revision=self.dataset_revision,
+            data_files=self.dataset_data_files,
+        )
         return _take_samples(dataset, limit)
 
     def load_rows(self, limit: int) -> List[Dict[str, Any]]:
@@ -1338,7 +1422,12 @@ class GraphwalksBenchmark(DatasetBenchmark):
         self.max_prompt_chars = max_prompt_chars
 
     def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
-        dataset = _safe_load_dataset(self.dataset_name, self.config_name, self.split)
+        dataset = _safe_load_dataset(
+            self.dataset_loader_name or self.dataset_name,
+            self.config_name,
+            self.split,
+            data_files=self.dataset_data_files,
+        )
         return _take_filtered_samples(
             dataset,
             limit,
@@ -1347,6 +1436,17 @@ class GraphwalksBenchmark(DatasetBenchmark):
                 and self.min_prompt_chars <= int(row.get("prompt_chars") or 0) <= self.max_prompt_chars
             ),
         )
+
+    def cache_metadata(self) -> Dict[str, Any]:
+        metadata = super().cache_metadata()
+        metadata.update(
+            {
+                "problem_type": self.problem_type,
+                "min_prompt_chars": self.min_prompt_chars,
+                "max_prompt_chars": self.max_prompt_chars,
+            }
+        )
+        return metadata
 
     def build_prompt(self, row: Dict[str, Any]) -> str:
         return row["prompt"]
@@ -1368,6 +1468,13 @@ class GraphwalksBenchmark(DatasetBenchmark):
 
 class MRCRBenchmark(DatasetBenchmark):
     dataset_name = "openai/mrcr"
+    dataset_loader_name = "parquet"
+    dataset_data_files = {
+        "train": [
+            "https://huggingface.co/datasets/openai/mrcr/resolve/main/8needle/8needle_0.parquet",
+            "https://huggingface.co/datasets/openai/mrcr/resolve/main/8needle/8needle_1.parquet",
+        ]
+    }
     config_name = None
     split = "train"
     category = "long_context"
@@ -1390,7 +1497,12 @@ class MRCRBenchmark(DatasetBenchmark):
         self.max_chars = max_chars
 
     def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
-        dataset = _safe_load_dataset(self.dataset_name, self.config_name, self.split)
+        dataset = _safe_load_dataset(
+            self.dataset_loader_name or self.dataset_name,
+            self.config_name,
+            self.split,
+            data_files=self.dataset_data_files,
+        )
         return _take_filtered_samples(
             dataset,
             limit,
@@ -1399,6 +1511,17 @@ class MRCRBenchmark(DatasetBenchmark):
                 and self.min_chars <= int(row.get("n_chars") or 0) < self.max_chars
             ),
         )
+
+    def cache_metadata(self) -> Dict[str, Any]:
+        metadata = super().cache_metadata()
+        metadata.update(
+            {
+                "n_needles": self.n_needles,
+                "min_chars": self.min_chars,
+                "max_chars": self.max_chars,
+            }
+        )
+        return metadata
 
     def build_prompt(self, row: Dict[str, Any]) -> str:
         return _render_chat_prompt(row["prompt"])
@@ -1639,7 +1762,8 @@ class PIQABenchmark(DatasetBenchmark):
 class SocialIQABenchmark(DatasetBenchmark):
     key = "social_iqa"
     display_name = "Social IQa"
-    dataset_name = "social_i_qa"
+    dataset_name = "allenai/social_i_qa"
+    dataset_revision = "refs/convert/parquet"
     config_name = None
     split = "validation"
     description = "Social commonsense reasoning with three answer choices."
@@ -1819,40 +1943,40 @@ SUPPORTED_BENCHMARKS: Dict[str, DatasetBenchmark] = {
         display_name="OpenAI MRCR v2 8-needle 4K-8K",
         description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 4K-8K contexts.",
         n_needles=8,
-        min_chars=4096,
-        max_chars=8192,
+        min_chars=16384,
+        max_chars=32768,
     ),
     "mrcr_v2_8needle_8k_16k": MRCRBenchmark(
         key="mrcr_v2_8needle_8k_16k",
         display_name="OpenAI MRCR v2 8-needle 8K-16K",
         description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 8K-16K contexts.",
         n_needles=8,
-        min_chars=8192,
-        max_chars=16384,
+        min_chars=32768,
+        max_chars=65536,
     ),
     "mrcr_v2_8needle_16k_32k": MRCRBenchmark(
         key="mrcr_v2_8needle_16k_32k",
         display_name="OpenAI MRCR v2 8-needle 16K-32K",
         description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 16K-32K contexts.",
         n_needles=8,
-        min_chars=16384,
-        max_chars=32768,
+        min_chars=65536,
+        max_chars=131072,
     ),
     "mrcr_v2_8needle_32k_64k": MRCRBenchmark(
         key="mrcr_v2_8needle_32k_64k",
         display_name="OpenAI MRCR v2 8-needle 32K-64K",
         description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 32K-64K contexts.",
         n_needles=8,
-        min_chars=32768,
-        max_chars=65536,
+        min_chars=131072,
+        max_chars=262144,
     ),
     "mrcr_v2_8needle_64k_128k": MRCRBenchmark(
         key="mrcr_v2_8needle_64k_128k",
         display_name="OpenAI MRCR v2 8-needle 64K-128K",
         description="OpenAI MRCR v2 retrieval benchmark with 8 needles and 64K-128K contexts.",
         n_needles=8,
-        min_chars=65536,
-        max_chars=131072,
+        min_chars=262144,
+        max_chars=524288,
     ),
 }
 
@@ -2211,8 +2335,10 @@ def benchmark_cache_status(selection: Optional[Sequence[str]], samples: int) -> 
     for benchmark_name in benchmark_names:
         benchmark = get_supported_benchmark(benchmark_name)
         rows_path, meta_path = _cache_paths(benchmark.key)
-        cached_rows = _count_jsonl_rows(rows_path)
         cache_metadata = _read_cache_metadata(meta_path)
+        expected_metadata = benchmark.cache_metadata()
+        metadata_matches = _cache_metadata_matches(cache_metadata, expected_metadata)
+        cached_rows = _count_jsonl_rows(rows_path) if metadata_matches else 0
         statuses.append(
             {
                 "benchmark": benchmark.key,
@@ -2229,6 +2355,7 @@ def benchmark_cache_status(selection: Optional[Sequence[str]], samples: int) -> 
                 "rows_sha256": _file_sha256(rows_path),
                 "meta_sha256": _file_sha256(meta_path),
                 "metadata": cache_metadata,
+                "metadata_matches": metadata_matches,
             }
         )
 

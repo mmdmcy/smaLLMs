@@ -155,6 +155,8 @@ class TerminalMenuApp:
                         self._export_latest_run(reader)
                     elif action == "quit":
                         break
+            except KeyboardInterrupt:
+                pass
             finally:
                 self._show_cursor()
                 self._clear_screen()
@@ -226,17 +228,7 @@ class TerminalMenuApp:
             reader,
             title="Benchmark Scope",
             subtitle="Suites are faster to operate; custom selection gives full control.",
-            options=[
-                MenuOption("Default core suite", ("suite", "core_suite"), "Balanced default for recurring local runs"),
-                MenuOption("Quick smoke suite", ("suite", "quick_suite"), "Three fast sanity-check benchmarks"),
-                MenuOption("Competition math suite", ("suite", "competition_math_suite"), "GSM8K, MATH, and AIME-style reasoning"),
-                MenuOption("Extended context suite", ("suite", "long_context_suite"), "Higher-context tasks capped for realistic small-model local runs"),
-                MenuOption("OpenAI public suite", ("suite", "openai_public_suite"), "Public benchmark subset trimmed for small local models"),
-                MenuOption("Frontier report suite", ("suite", "frontier_report_suite"), "Small-model-friendly subset of commonly reported lab benchmarks"),
-                MenuOption("Serious suite", ("suite", "serious_suite"), "Broad leaderboard sweep without frontier-scale context bands"),
-                MenuOption("Custom runnable benchmarks", ("custom", None), "Select individual runnable benchmarks"),
-                MenuOption("Back", None, "Return to the main menu"),
-            ],
+            options=self._benchmark_scope_options(),
         )
         if benchmark_mode is None:
             return
@@ -308,6 +300,17 @@ class TerminalMenuApp:
                 )
             )
             self._wait_for_key(reader, "Run finished. Press any key to return to the menu.")
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            self.app.terminal.finish_live_screen()
+            self._show_message(
+                reader,
+                title="Run Cancelled",
+                lines=[
+                    "Benchmark run cancelled.",
+                    "",
+                    "Any benchmark artifacts written before cancellation are still in the artifacts directory.",
+                ],
+            )
         except Exception as exc:
             self._show_message(
                 reader,
@@ -318,6 +321,27 @@ class TerminalMenuApp:
                     "The live run renderer exited early. Review the terminal output or logs and retry.",
                 ],
             )
+
+    def _benchmark_scope_options(self) -> List[MenuOption]:
+        """Build benchmark suite options from the shared catalog."""
+        options = [
+            MenuOption(
+                label=suite["display_name"],
+                value=("suite", suite["key"]),
+                hint=(
+                    f"{suite['description']} "
+                    f"({len(suite['benchmarks'])} benchmark{'s' if len(suite['benchmarks']) != 1 else ''})"
+                ),
+            )
+            for suite in list_benchmark_suites()
+        ]
+        options.extend(
+            [
+                MenuOption("Custom runnable benchmarks", ("custom", None), "Select individual runnable benchmarks"),
+                MenuOption("Back", None, "Return to the main menu"),
+            ]
+        )
+        return options
 
     def _show_discovered_models(self, reader: CrossPlatformKeyReader) -> None:
         discovered = asyncio.run(self.app._get_orchestrator().discover_local_models())

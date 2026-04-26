@@ -150,6 +150,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_smaLLMs_subprocess(python_executable: Path, repo_root: Path, cli_args: List[str]) -> int:
+    """Run smaLLMs.py and return a clean cancellation code on Ctrl+C."""
+    try:
+        result = subprocess.run(
+            [str(python_executable), str(repo_root / "smaLLMs.py"), *cli_args],
+            cwd=repo_root,
+            check=False,
+        )
+        return result.returncode
+    except KeyboardInterrupt:
+        print("\nCancelled.")
+        return 130
+
+
 def main() -> int:
     args = build_parser().parse_args()
     repo_root = _repo_root()
@@ -182,23 +196,17 @@ def main() -> int:
         print("")
         print(f"Running smaLLMs.py {' '.join(cli_args)} ...")
         sys.stdout.flush()
-        result = subprocess.run(
-            [str(python_executable), str(repo_root / "smaLLMs.py"), *cli_args],
-            cwd=repo_root,
-            check=False,
-        )
-        return result.returncode
+        return _run_smaLLMs_subprocess(python_executable, repo_root, cli_args)
 
     print("")
     print("Opening the arrow-key menu ...")
     sys.stdout.flush()
-    result = subprocess.run(
-        [str(python_executable), str(repo_root / "smaLLMs.py"), "menu"],
-        cwd=repo_root,
-        check=False,
-    )
-    return result.returncode
+    return _run_smaLLMs_subprocess(python_executable, repo_root, ["menu"])
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("\nCancelled.")
+        raise SystemExit(130)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke-test entrypoint for the current smaLLMs CLI."""
+"""Canonical test entrypoint for the smaLLMs repository."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import unittest
 
 
 def main() -> int:
-    """Run the test suite under ./tests."""
+    """Run every test under ./tests from the repository root."""
     root = pathlib.Path(__file__).resolve().parent
     sys.path.insert(0, str(root))
     suite = unittest.defaultTestLoader.discover(str(root / "tests"))

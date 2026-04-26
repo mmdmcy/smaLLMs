@@ -818,6 +818,10 @@ def main() -> None:
         raise SystemExit(f"Missing dependency '{exc.name}'. Install the requirements before running this command.")
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc))
+    except KeyboardInterrupt:
+        app.terminal.finish_live_screen()
+        print("\nCancelled.")
+        raise SystemExit(130)
 
 
 if __name__ == "__main__":
