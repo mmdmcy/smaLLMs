@@ -27,6 +27,8 @@ PORTUI_MANIFEST_DESCRIPTION=""
 CURRENT_PROJECT_DIR=""
 CURRENT_PROJECT_ID=""
 CURRENT_WORKSPACE_DIR=""
+PORTUI_SCREEN_ACTIVE=0
+PORTUI_RAW_STTY=""
 
 usage() {
     cat <<'EOF'
@@ -499,6 +501,9 @@ project_count() {
 }
 
 cleanup() {
+    if command -v exit_menu_screen >/dev/null 2>&1; then
+        exit_menu_screen
+    fi
     if [ -n "${PORTUI_ACTION_LIST_FILE-}" ] && [ -f "$PORTUI_ACTION_LIST_FILE" ]; then
         rm -f "$PORTUI_ACTION_LIST_FILE"
     fi
@@ -970,187 +975,478 @@ run_action_by_id() {
     run_resolved_action
 }
 
+terminal_ready() {
+    [ -t 0 ] && [ -t 1 ]
+}
+
+enter_raw_keys() {
+    if terminal_ready && [ -z "$PORTUI_RAW_STTY" ]; then
+        PORTUI_RAW_STTY=$(stty -g 2>/dev/null || true)
+        if [ -n "$PORTUI_RAW_STTY" ]; then
+            stty -echo -icanon min 1 time 0 2>/dev/null || true
+        fi
+    fi
+}
+
+exit_raw_keys() {
+    if [ -n "$PORTUI_RAW_STTY" ]; then
+        stty "$PORTUI_RAW_STTY" 2>/dev/null || true
+        PORTUI_RAW_STTY=""
+    fi
+}
+
+enter_menu_screen() {
+    if terminal_ready && [ "$PORTUI_SCREEN_ACTIVE" -eq 0 ]; then
+        printf '\033[?1049h\033[?25l'
+        PORTUI_SCREEN_ACTIVE=1
+    fi
+}
+
+exit_menu_screen() {
+    exit_raw_keys
+    if [ "$PORTUI_SCREEN_ACTIVE" -eq 1 ]; then
+        printf '\033[?25h\033[?1049l'
+        PORTUI_SCREEN_ACTIVE=0
+    fi
+}
+
+clear_menu_screen() {
+    if terminal_ready; then
+        printf '\033[2J\033[H'
+    else
+        printf '\n'
+    fi
+}
+
+terminal_width() {
+    width=$(tput cols 2>/dev/null || printf '%s' "96")
+    case "$width" in
+        ''|*[!0-9]*) width=96 ;;
+    esac
+    if [ "$width" -lt 72 ]; then
+        width=72
+    elif [ "$width" -gt 120 ]; then
+        width=120
+    fi
+    printf '%s' "$width"
+}
+
+truncate_text() {
+    text=$1
+    width=$2
+    if [ "$width" -lt 4 ] || [ "${#text}" -le "$width" ]; then
+        printf '%s' "$text"
+        return
+    fi
+
+    limit=$((width - 3))
+    printf '%s...' "$(printf '%s' "$text" | cut -c 1-"$limit")"
+}
+
+render_menu_item() {
+    number=$1
+    label=$2
+    hint=$3
+    selected=$4
+    width=$5
+    reset=$(printf '\033[0m')
+    dim=$(printf '\033[2m')
+    reverse=$(printf '\033[7m')
+
+    if [ "$selected" -eq 1 ]; then
+        marker=">"
+    else
+        marker=" "
+    fi
+
+    line=$(truncate_text "$marker $number. $label" "$width")
+    if [ "$selected" -eq 1 ]; then
+        printf '  %s%s%s\n' "$reverse" "$line" "$reset"
+    else
+        printf '  %s\n' "$line"
+    fi
+
+    if [ -n "$hint" ]; then
+        printf '    %s%s%s\n' "$dim" "$(truncate_text "$hint" "$((width - 4))")" "$reset"
+    fi
+}
+
+read_menu_byte() {
+    dd bs=1 count=1 2>/dev/null | od -An -tu1 | tr -d ' \n'
+}
+
+read_menu_byte_optional() {
+    if [ -n "$PORTUI_RAW_STTY" ]; then
+        stty -echo -icanon min 0 time 1 2>/dev/null || true
+    fi
+    code=$(read_menu_byte)
+    if [ -n "$PORTUI_RAW_STTY" ]; then
+        stty -echo -icanon min 1 time 0 2>/dev/null || true
+    fi
+    printf '%s' "$code"
+}
+
+read_menu_key() {
+    code=$(read_menu_byte)
+    case "$code" in
+        '') printf '%s\n' "none" ;;
+        3) printf '%s\n' "interrupt" ;;
+        10|13) printf '%s\n' "enter" ;;
+        27)
+            second=$(read_menu_byte_optional)
+            third=$(read_menu_byte_optional)
+            if [ "$second" = "91" ]; then
+                case "$third" in
+                    65) printf '%s\n' "up" ;;
+                    66) printf '%s\n' "down" ;;
+                    67) printf '%s\n' "right" ;;
+                    68) printf '%s\n' "back" ;;
+                    *) printf '%s\n' "back" ;;
+                esac
+            else
+                printf '%s\n' "back"
+            fi
+            ;;
+        98|66) printf '%s\n' "back" ;;
+        106|74) printf '%s\n' "down" ;;
+        107|75) printf '%s\n' "up" ;;
+        113|81) printf '%s\n' "quit" ;;
+        48|49|50|51|52|53|54|55|56|57) printf '%s\n' "$((code - 48))" ;;
+        *) printf '%s\n' "unknown" ;;
+    esac
+}
+
+set_menu_window() {
+    cursor=$1
+    total=$2
+    max_visible=$3
+
+    if [ "$total" -le "$max_visible" ]; then
+        MENU_START=1
+        MENU_END=$total
+        return
+    fi
+
+    half=$((max_visible / 2))
+    MENU_START=$((cursor - half))
+    if [ "$MENU_START" -lt 1 ]; then
+        MENU_START=1
+    fi
+    MENU_END=$((MENU_START + max_visible - 1))
+    if [ "$MENU_END" -gt "$total" ]; then
+        MENU_END=$total
+        MENU_START=$((MENU_END - max_visible + 1))
+    fi
+}
+
+action_item_count() {
+    count=0
+    while IFS= read -r action_file || [ -n "$action_file" ]; do
+        [ -n "$action_file" ] || continue
+        count=$((count + 1))
+    done < "$PORTUI_ACTION_LIST_FILE"
+    printf '%s' "$count"
+}
+
+action_file_by_index() {
+    target_index=$1
+    current_index=0
+    while IFS= read -r action_file || [ -n "$action_file" ]; do
+        [ -n "$action_file" ] || continue
+        current_index=$((current_index + 1))
+        if [ "$current_index" -eq "$target_index" ]; then
+            printf '%s\n' "$action_file"
+            return 0
+        fi
+    done < "$PORTUI_ACTION_LIST_FILE"
+    return 1
+}
+
+project_manifest_by_index() {
+    target_index=$1
+    current_index=0
+    while IFS= read -r manifest_dir || [ -n "$manifest_dir" ]; do
+        [ -n "$manifest_dir" ] || continue
+        current_index=$((current_index + 1))
+        if [ "$current_index" -eq "$target_index" ]; then
+            printf '%s\n' "$manifest_dir"
+            return 0
+        fi
+    done < "$PORTUI_PROJECT_LIST_FILE"
+    return 1
+}
+
+render_action_menu() {
+    cursor=$1
+    allow_back=$2
+    total=$(action_item_count)
+    width=$(terminal_width)
+    reset=$(printf '\033[0m')
+    dim=$(printf '\033[2m')
+    bold=$(printf '\033[1m')
+    rule_width=$((width - 4))
+
+    clear_menu_screen
+    printf '\n  %s%s%s\n' "$bold" "$PORTUI_MANIFEST_NAME" "$reset"
+    if [ -n "$PORTUI_MANIFEST_DESCRIPTION" ]; then
+        printf '  %s%s%s\n' "$dim" "$(truncate_text "$PORTUI_MANIFEST_DESCRIPTION" "$rule_width")" "$reset"
+    fi
+    subtitle="Project: $CURRENT_PROJECT_ID | OS: $PORTUI_OS"
+    if [ -n "$CURRENT_WORKSPACE_DIR" ]; then
+        subtitle="$subtitle | Workspace: $CURRENT_WORKSPACE_DIR"
+    fi
+    printf '  %s%s%s\n' "$dim" "$(truncate_text "$subtitle" "$rule_width")" "$reset"
+    printf '  %s\n' "$(printf '%*s' "$rule_width" '' | tr ' ' '-')"
+
+    set_menu_window "$cursor" "$total" 11
+    if [ "$MENU_START" -gt 1 ]; then
+        printf '  %smore above%s\n' "$dim" "$reset"
+    fi
+
+    current_index=0
+    while IFS= read -r action_file || [ -n "$action_file" ]; do
+        [ -n "$action_file" ] || continue
+        current_index=$((current_index + 1))
+        if [ "$current_index" -lt "$MENU_START" ] || [ "$current_index" -gt "$MENU_END" ]; then
+            continue
+        fi
+
+        load_action "$action_file"
+        selected=0
+        if [ "$current_index" -eq "$cursor" ]; then
+            selected=1
+        fi
+        render_menu_item "$current_index" "$ACTION_TITLE [$ACTION_ID]" "$ACTION_DESCRIPTION" "$selected" "$rule_width"
+    done < "$PORTUI_ACTION_LIST_FILE"
+
+    if [ "$MENU_END" -lt "$total" ]; then
+        printf '  %smore below%s\n' "$dim" "$reset"
+    fi
+
+    if [ "$allow_back" -eq 1 ]; then
+        footer="Up/Down move | Enter select | B/Esc back | Q quit"
+    else
+        footer="Up/Down move | Enter select | Q quit"
+    fi
+    printf '\n  %s%s%s\n' "$dim" "$footer" "$reset"
+}
+
+render_action_confirm() {
+    cursor=$1
+    width=$(terminal_width)
+    reset=$(printf '\033[0m')
+    dim=$(printf '\033[2m')
+    bold=$(printf '\033[1m')
+    rule_width=$((width - 4))
+    command_text=$(display_command)
+
+    clear_menu_screen
+    printf '\n  %s%s%s\n' "$bold" "$ACTION_TITLE" "$reset"
+    if [ -n "$ACTION_DESCRIPTION" ]; then
+        printf '  %s%s%s\n' "$dim" "$(truncate_text "$ACTION_DESCRIPTION" "$rule_width")" "$reset"
+    fi
+    printf '  Project: %s\n' "$CURRENT_PROJECT_ID"
+    printf '  Working directory: %s\n' "$(truncate_text "$RESOLVED_CWD" "$((rule_width - 19))")"
+    printf '  Command: %s\n' "$(truncate_text "$command_text" "$((rule_width - 11))")"
+    printf '  %s\n' "$(printf '%*s' "$rule_width" '' | tr ' ' '-')"
+
+    selected=0
+    if [ "$cursor" -eq 1 ]; then selected=1; fi
+    render_menu_item 1 "Run action" "Action output will be shown in normal terminal scrollback." "$selected" "$rule_width"
+    selected=0
+    if [ "$cursor" -eq 2 ]; then selected=1; fi
+    render_menu_item 2 "Back" "Return to the action list." "$selected" "$rule_width"
+
+    printf '\n  %s%s%s\n' "$dim" "Up/Down move | Enter select | B/Esc back | Q quit" "$reset"
+}
+
+render_workspace_menu() {
+    cursor=$1
+    total=$(project_count)
+    width=$(terminal_width)
+    reset=$(printf '\033[0m')
+    dim=$(printf '\033[2m')
+    bold=$(printf '\033[1m')
+    rule_width=$((width - 4))
+
+    clear_menu_screen
+    printf '\n  %sPortUI Workspace%s\n' "$bold" "$reset"
+    printf '  %s%s%s\n' "$dim" "$(truncate_text "$WORKSPACE_DIR | OS: $PORTUI_OS" "$rule_width")" "$reset"
+    printf '  %s\n' "$(printf '%*s' "$rule_width" '' | tr ' ' '-')"
+
+    set_menu_window "$cursor" "$total" 11
+    if [ "$MENU_START" -gt 1 ]; then
+        printf '  %smore above%s\n' "$dim" "$reset"
+    fi
+
+    current_index=0
+    while IFS= read -r manifest_dir || [ -n "$manifest_dir" ]; do
+        [ -n "$manifest_dir" ] || continue
+        current_index=$((current_index + 1))
+        if [ "$current_index" -lt "$MENU_START" ] || [ "$current_index" -gt "$MENU_END" ]; then
+            continue
+        fi
+
+        project_id=$(project_id_from_manifest_dir "$manifest_dir")
+        read_manifest_summary "$manifest_dir"
+        selected=0
+        if [ "$current_index" -eq "$cursor" ]; then
+            selected=1
+        fi
+        render_menu_item "$current_index" "$SUMMARY_NAME [$project_id]" "$SUMMARY_DESCRIPTION" "$selected" "$rule_width"
+    done < "$PORTUI_PROJECT_LIST_FILE"
+
+    if [ "$MENU_END" -lt "$total" ]; then
+        printf '  %smore below%s\n' "$dim" "$reset"
+    fi
+
+    printf '\n  %s%s%s\n' "$dim" "Up/Down move | Enter select | Q quit" "$reset"
+}
+
+choose_action_index() {
+    allow_back=$1
+    total=$(action_item_count)
+    cursor=1
+
+    while :; do
+        render_action_menu "$cursor" "$allow_back"
+        key=$(read_menu_key)
+        case "$key" in
+            up) cursor=$((cursor - 1)); if [ "$cursor" -lt 1 ]; then cursor=$total; fi ;;
+            down) cursor=$((cursor + 1)); if [ "$cursor" -gt "$total" ]; then cursor=1; fi ;;
+            enter) MENU_CHOICE=$cursor; return 0 ;;
+            quit) exit_menu_screen; exit 0 ;;
+            interrupt) exit_menu_screen; exit 130 ;;
+            back) if [ "$allow_back" -eq 1 ]; then MENU_CHOICE=0; return 0; fi ;;
+            [1-9]) if [ "$key" -le "$total" ]; then MENU_CHOICE=$key; return 0; fi ;;
+        esac
+    done
+}
+
+confirm_action_run() {
+    cursor=1
+
+    while :; do
+        render_action_confirm "$cursor"
+        key=$(read_menu_key)
+        case "$key" in
+            up|down) if [ "$cursor" -eq 1 ]; then cursor=2; else cursor=1; fi ;;
+            enter) MENU_CHOICE=$cursor; return 0 ;;
+            quit) exit_menu_screen; exit 0 ;;
+            interrupt) exit_menu_screen; exit 130 ;;
+            back) MENU_CHOICE=2; return 0 ;;
+            1|2) MENU_CHOICE=$key; return 0 ;;
+        esac
+    done
+}
+
+choose_workspace_index() {
+    total=$(project_count)
+    cursor=1
+
+    while :; do
+        render_workspace_menu "$cursor"
+        key=$(read_menu_key)
+        case "$key" in
+            up) cursor=$((cursor - 1)); if [ "$cursor" -lt 1 ]; then cursor=$total; fi ;;
+            down) cursor=$((cursor + 1)); if [ "$cursor" -gt "$total" ]; then cursor=1; fi ;;
+            enter) MENU_CHOICE=$cursor; return 0 ;;
+            quit|back) exit_menu_screen; exit 0 ;;
+            interrupt) exit_menu_screen; exit 130 ;;
+            [1-9]) if [ "$key" -le "$total" ]; then MENU_CHOICE=$key; return 0; fi ;;
+        esac
+    done
+}
+
+print_loaded_action_preview() {
+    printf '\n%s\n' "$ACTION_TITLE"
+    if [ -n "$ACTION_DESCRIPTION" ]; then
+        printf '%s\n' "$ACTION_DESCRIPTION"
+    fi
+    printf '%s\n' "Project: $CURRENT_PROJECT_ID"
+    printf '%s\n' "Working directory: $RESOLVED_CWD"
+    printf '%s\n' "Resolution: $RESOLUTION_SOURCE"
+    printf '%s' "Command: "
+    display_command
+    printf '\n'
+    if is_truthy "$ACTION_INTERACTIVE"; then
+        printf '%s\n' "I/O: interactive terminal"
+    fi
+
+    if [ -n "$RESOLVED_ENV" ]; then
+        printf '%s\n' "Environment overrides:"
+        old_ifs=$IFS
+        IFS='|'
+        set -- $RESOLVED_ENV
+        IFS=$old_ifs
+        for pair in "$@"; do
+            printf '  %s\n' "$pair"
+        done
+    fi
+}
+
+pause_after_action() {
+    printf '\n%s' "Press Enter to return to PortUI."
+    IFS= read -r _
+}
+
 interactive_action_menu() {
     allow_back=$1
 
+    if ! terminal_ready; then
+        printf '%s\n' "Interactive PortUI requires a terminal. Use --list or --run ACTION_ID for scripts." >&2
+        exit 1
+    fi
+
+    if [ "$(action_item_count)" -eq 0 ]; then
+        printf '%s\n' "No actions found." >&2
+        exit 1
+    fi
+
+    enter_menu_screen
+    enter_raw_keys
     while :; do
-        printf '\n%s\n' "$PORTUI_MANIFEST_NAME"
-        if [ -n "$PORTUI_MANIFEST_DESCRIPTION" ]; then
-            printf '%s\n' "$PORTUI_MANIFEST_DESCRIPTION"
-        fi
-        printf '%s\n' "Project: $CURRENT_PROJECT_ID"
-        printf '%s\n' "Project directory: $CURRENT_PROJECT_DIR"
-        if [ -n "$CURRENT_WORKSPACE_DIR" ]; then
-            printf '%s\n' "Workspace: $CURRENT_WORKSPACE_DIR"
-        fi
-        printf '%s\n\n' "OS: $PORTUI_OS"
-
-        count=0
-        while IFS= read -r action_file || [ -n "$action_file" ]; do
-            [ -n "$action_file" ] || continue
-            load_action "$action_file"
-            count=$((count + 1))
-            printf '%2d. %s [%s]\n' "$count" "$ACTION_TITLE" "$ACTION_ID"
-            if [ -n "$ACTION_DESCRIPTION" ]; then
-                printf '    %s\n' "$ACTION_DESCRIPTION"
-            fi
-        done < "$PORTUI_ACTION_LIST_FILE"
-
-        if [ "$count" -eq 0 ]; then
-            printf '%s\n' "No actions found."
-            exit 1
+        choose_action_index "$allow_back"
+        if [ "$MENU_CHOICE" -eq 0 ]; then
+            exit_menu_screen
+            return 0
         fi
 
-        if [ "$allow_back" -eq 1 ]; then
-            printf '\n%s' "Select an action number, b to go back, or q to quit: "
-        else
-            printf '\n%s' "Select an action number, or q to quit: "
-        fi
-        IFS= read -r selection
-
-        case "$selection" in
-            q|Q|quit|exit)
-                exit 0
-                ;;
-            b|B|back)
-                if [ "$allow_back" -eq 1 ]; then
-                    return 0
-                fi
-                ;;
-        esac
-
-        case "$selection" in
-            ''|*[!0-9]*)
-                printf '%s\n' "Invalid selection."
-                continue
-                ;;
-        esac
-
-        if [ "$selection" -lt 1 ] || [ "$selection" -gt "$count" ]; then
-            printf '%s\n' "Selection out of range."
-            continue
-        fi
-
-        current_index=0
-        selected_file=""
-        while IFS= read -r action_file || [ -n "$action_file" ]; do
-            [ -n "$action_file" ] || continue
-            current_index=$((current_index + 1))
-            if [ "$current_index" -eq "$selection" ]; then
-                selected_file=$action_file
-                break
-            fi
-        done < "$PORTUI_ACTION_LIST_FILE"
-
-        if [ -z "$selected_file" ]; then
-            printf '%s\n' "Unable to resolve selection."
-            continue
-        fi
-
+        selected_file=$(action_file_by_index "$MENU_CHOICE") || continue
         load_action "$selected_file"
         resolve_action
 
-        printf '\n%s\n' "$ACTION_TITLE"
-        if [ -n "$ACTION_DESCRIPTION" ]; then
-            printf '%s\n' "$ACTION_DESCRIPTION"
-        fi
-        printf '%s\n' "Project: $CURRENT_PROJECT_ID"
-        printf '%s\n' "Working directory: $RESOLVED_CWD"
-        printf '%s\n' "Resolution: $RESOLUTION_SOURCE"
-        printf '%s' "Command: "
-        display_command
-        printf '\n'
-        if is_truthy "$ACTION_INTERACTIVE"; then
-            printf '%s\n' "I/O: interactive terminal"
+        confirm_action_run
+        if [ "$MENU_CHOICE" -ne 1 ]; then
+            continue
         fi
 
-        if [ -n "$RESOLVED_ENV" ]; then
-            printf '%s\n' "Environment overrides:"
-            old_ifs=$IFS
-            IFS='|'
-            set -- $RESOLVED_ENV
-            IFS=$old_ifs
-            for pair in "$@"; do
-                printf '  %s\n' "$pair"
-            done
-        fi
-
-        printf '\n%s' "Run this action? [Y/n]: "
-        IFS= read -r confirmation
-        case "$confirmation" in
-            n|N|no|NO)
-                continue
-                ;;
-        esac
-
+        exit_menu_screen
+        print_loaded_action_preview
         run_resolved_action
-        printf '\n%s' "Press Enter to return to the menu."
-        IFS= read -r _
+        pause_after_action
+        enter_menu_screen
+        enter_raw_keys
     done
 }
 
 interactive_workspace_menu() {
+    if ! terminal_ready; then
+        printf '%s\n' "Interactive PortUI requires a terminal. Use --list-projects or --project with --run for scripts." >&2
+        exit 1
+    fi
+
+    enter_menu_screen
+    enter_raw_keys
     while :; do
-        printf '\n%s\n' "PortUI Workspace"
-        printf '%s\n' "$WORKSPACE_DIR"
-        printf '%s\n\n' "OS: $PORTUI_OS"
-
-        count=0
-        while IFS= read -r manifest_dir || [ -n "$manifest_dir" ]; do
-            [ -n "$manifest_dir" ] || continue
-            count=$((count + 1))
-            project_id=$(project_id_from_manifest_dir "$manifest_dir")
-            read_manifest_summary "$manifest_dir"
-            printf '%2d. %s [%s]\n' "$count" "$SUMMARY_NAME" "$project_id"
-            if [ -n "$SUMMARY_DESCRIPTION" ]; then
-                printf '    %s\n' "$SUMMARY_DESCRIPTION"
-            fi
-        done < "$PORTUI_PROJECT_LIST_FILE"
-
-        if [ "$count" -eq 0 ]; then
-            printf '%s\n' "No PortUI projects found."
-            exit 1
-        fi
-
-        printf '\n%s' "Select a project number, or q to quit: "
-        IFS= read -r selection
-
-        case "$selection" in
-            q|Q|quit|exit)
-                exit 0
-                ;;
-        esac
-
-        case "$selection" in
-            ''|*[!0-9]*)
-                printf '%s\n' "Invalid selection."
-                continue
-                ;;
-        esac
-
-        if [ "$selection" -lt 1 ] || [ "$selection" -gt "$count" ]; then
-            printf '%s\n' "Selection out of range."
-            continue
-        fi
-
-        current_index=0
-        selected_manifest=""
-        while IFS= read -r manifest_dir || [ -n "$manifest_dir" ]; do
-            [ -n "$manifest_dir" ] || continue
-            current_index=$((current_index + 1))
-            if [ "$current_index" -eq "$selection" ]; then
-                selected_manifest=$manifest_dir
-                break
-            fi
-        done < "$PORTUI_PROJECT_LIST_FILE"
-
-        if [ -z "$selected_manifest" ]; then
-            printf '%s\n' "Unable to resolve selection."
-            continue
-        fi
+        choose_workspace_index
+        selected_manifest=$(project_manifest_by_index "$MENU_CHOICE") || continue
 
         load_manifest_context "$selected_manifest" "$WORKSPACE_DIR"
+        exit_menu_screen
         interactive_action_menu 1
+        enter_menu_screen
+        enter_raw_keys
     done
 }
 

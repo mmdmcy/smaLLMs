@@ -907,6 +907,215 @@ function Show-ActionList {
     }
 }
 
+function Test-PortUIInteractiveHost {
+    return (-not [Console]::IsInputRedirected) -and (-not [Console]::IsOutputRedirected)
+}
+
+function Get-PortUITerminalWidth {
+    try {
+        $width = [Console]::WindowWidth
+        if ($width -gt 0) {
+            return [Math]::Min([Math]::Max($width, 72), 120)
+        }
+    } catch {
+    }
+
+    return 96
+}
+
+function Format-PortUIText {
+    param(
+        [string]$Text,
+        [int]$Width
+    )
+
+    if ([string]::IsNullOrEmpty($Text)) {
+        return ''
+    }
+    if ($Width -lt 4 -or $Text.Length -le $Width) {
+        return $Text
+    }
+
+    return $Text.Substring(0, [Math]::Max(1, $Width - 3)) + '...'
+}
+
+function Enter-PortUIScreen {
+    if (Test-PortUIInteractiveHost) {
+        [Console]::Write("`e[?1049h`e[?25l")
+    }
+}
+
+function Exit-PortUIScreen {
+    if (Test-PortUIInteractiveHost) {
+        [Console]::Write("`e[?25h`e[?1049l")
+    }
+}
+
+function Clear-PortUIScreen {
+    if (Test-PortUIInteractiveHost) {
+        [Console]::Write("`e[2J`e[H")
+    } else {
+        Clear-Host
+    }
+}
+
+function Get-PortUIChoiceKey {
+    $key = [Console]::ReadKey($true)
+
+    switch ($key.Key) {
+        ([ConsoleKey]::UpArrow) { return 'up' }
+        ([ConsoleKey]::DownArrow) { return 'down' }
+        ([ConsoleKey]::LeftArrow) { return 'back' }
+        ([ConsoleKey]::Backspace) { return 'back' }
+        ([ConsoleKey]::Escape) { return 'back' }
+        ([ConsoleKey]::Enter) { return 'enter' }
+        ([ConsoleKey]::Q) { return 'quit' }
+        ([ConsoleKey]::B) { return 'back' }
+        ([ConsoleKey]::J) { return 'down' }
+        ([ConsoleKey]::K) { return 'up' }
+        default {
+            if ($key.KeyChar) {
+                return ([string]$key.KeyChar).ToLowerInvariant()
+            }
+        }
+    }
+
+    return 'unknown'
+}
+
+function Get-PortUIWindowBounds {
+    param(
+        [int]$Cursor,
+        [int]$Total,
+        [int]$MaxVisible
+    )
+
+    if ($Total -le $MaxVisible) {
+        return @{ Start = 0; End = $Total }
+    }
+
+    $half = [Math]::Floor($MaxVisible / 2)
+    $start = [Math]::Max(0, $Cursor - $half)
+    $end = [Math]::Min($Total, $start + $MaxVisible)
+    $start = [Math]::Max(0, $end - $MaxVisible)
+    return @{ Start = $start; End = $end }
+}
+
+function Show-PortUIChoiceMenu {
+    param(
+        [string]$Title,
+        [string]$Subtitle,
+        [object[]]$Items,
+        [int]$Cursor,
+        [string]$Footer
+    )
+
+    $width = Get-PortUITerminalWidth
+    $reset = "`e[0m"
+    $dim = "`e[2m"
+    $bold = "`e[1m"
+    $reverse = "`e[7m"
+    $lineWidth = [Math]::Max(20, $width - 2)
+    $bounds = Get-PortUIWindowBounds -Cursor $Cursor -Total $Items.Count -MaxVisible 11
+
+    Clear-PortUIScreen
+    Write-Host ''
+    Write-Host ("  {0}{1}{2}" -f $bold, $Title, $reset)
+    if (-not [string]::IsNullOrWhiteSpace($Subtitle)) {
+        Write-Host ("  {0}{1}{2}" -f $dim, (Format-PortUIText -Text $Subtitle -Width $lineWidth), $reset)
+    }
+    Write-Host ("  {0}" -f ('-' * [Math]::Min($lineWidth, 88)))
+
+    if ($bounds.Start -gt 0) {
+        Write-Host ("  {0}more above{1}" -f $dim, $reset)
+    }
+
+    for ($i = $bounds.Start; $i -lt $bounds.End; $i++) {
+        $item = $Items[$i]
+        $prefix = if ($i -eq $Cursor) { '>' } else { ' ' }
+        $keyText = if ($item.PSObject.Properties.Name -contains 'Key') { $item.Key } else { ($i + 1).ToString() }
+        $label = Format-PortUIText -Text ("$prefix $keyText. $($item.Label)") -Width $lineWidth
+
+        if ($i -eq $Cursor) {
+            Write-Host ("  {0}{1}{2}" -f $reverse, $label.PadRight($lineWidth), $reset)
+        } else {
+            Write-Host ("  {0}" -f $label)
+        }
+
+        if ($item.PSObject.Properties.Name -contains 'Hint' -and -not [string]::IsNullOrWhiteSpace($item.Hint)) {
+            Write-Host ("    {0}{1}{2}" -f $dim, (Format-PortUIText -Text $item.Hint -Width ($lineWidth - 2)), $reset)
+        }
+    }
+
+    if ($bounds.End -lt $Items.Count) {
+        Write-Host ("  {0}more below{1}" -f $dim, $reset)
+    }
+
+    Write-Host ''
+    Write-Host ("  {0}{1}{2}" -f $dim, $Footer, $reset)
+}
+
+function Invoke-PortUIChoiceMenu {
+    param(
+        [string]$Title,
+        [string]$Subtitle,
+        [object[]]$Items,
+        [bool]$AllowBack
+    )
+
+    if ($Items.Count -eq 0) {
+        return -1
+    }
+
+    $cursor = 0
+    $footer = if ($AllowBack) {
+        'Up/Down move | Enter select | B/Esc back | Q quit'
+    } else {
+        'Up/Down move | Enter select | Q quit'
+    }
+
+    while ($true) {
+        Show-PortUIChoiceMenu -Title $Title -Subtitle $Subtitle -Items $Items -Cursor $cursor -Footer $footer
+        $key = Get-PortUIChoiceKey
+
+        switch ($key) {
+            'up' {
+                $cursor = if ($cursor -le 0) { $Items.Count - 1 } else { $cursor - 1 }
+                continue
+            }
+            'down' {
+                $cursor = if ($cursor -ge ($Items.Count - 1)) { 0 } else { $cursor + 1 }
+                continue
+            }
+            'enter' {
+                return $cursor
+            }
+            'quit' {
+                return -2
+            }
+            'back' {
+                if ($AllowBack) {
+                    return -1
+                }
+                continue
+            }
+            default {
+                if ($key -match '^[1-9]$') {
+                    $index = [int]$key - 1
+                    if ($index -ge 0 -and $index -lt $Items.Count) {
+                        return $index
+                    }
+                }
+            }
+        }
+    }
+}
+
+function Wait-PortUIReturn {
+    Write-Host ''
+    Read-Host 'Press Enter to return to PortUI' | Out-Null
+}
+
 function Invoke-ActionById {
     param(
         [string]$ActionId
@@ -928,66 +1137,75 @@ function Show-ActionMenu {
         [bool]$AllowBack
     )
 
-    while ($true) {
-        Clear-Host
-        Write-Host $script:CurrentManifestName
-        if ($script:CurrentManifestDescription) {
-            Write-Host $script:CurrentManifestDescription
-        }
-        Write-Host "Project: $($script:CurrentProjectId)"
-        Write-Host "Project directory: $($script:CurrentProjectDir)"
-        if ($script:CurrentWorkspaceDir) {
-            Write-Host "Workspace: $($script:CurrentWorkspaceDir)"
-        }
-        Write-Host "OS: $(Get-HostOSName)"
-        Write-Host ''
+    if ($script:CurrentActions.Count -eq 0) {
+        throw "No actions found."
+    }
 
-        if ($script:CurrentActions.Count -eq 0) {
-            throw "No actions found."
-        }
-
-        for ($i = 0; $i -lt $script:CurrentActions.Count; $i++) {
-            $action = $script:CurrentActions[$i]
-            Write-Host ('{0,2}. {1} [{2}]' -f ($i + 1), $action.Title, $action.ID)
-            if ($action.Description) {
-                Write-Host "    $($action.Description)"
+    Enter-PortUIScreen
+    try {
+        while ($true) {
+            $items = @()
+            for ($i = 0; $i -lt $script:CurrentActions.Count; $i++) {
+                $action = $script:CurrentActions[$i]
+                $items += [pscustomobject]@{
+                    Key = ($i + 1).ToString()
+                    Label = "$($action.Title) [$($action.ID)]"
+                    Hint = $action.Description
+                }
             }
-        }
 
-        Write-Host ''
-        if ($AllowBack) {
-            $selection = Read-Host 'Select an action number, b to go back, or q to quit'
-        } else {
-            $selection = Read-Host 'Select an action number, or q to quit'
-        }
+            $subtitleParts = @(
+                "Project: $($script:CurrentProjectId)",
+                "OS: $(Get-HostOSName)"
+            )
+            if ($script:CurrentWorkspaceDir) {
+                $subtitleParts += "Workspace: $($script:CurrentWorkspaceDir)"
+            }
+            $choice = Invoke-PortUIChoiceMenu `
+                -Title $script:CurrentManifestName `
+                -Subtitle ($subtitleParts -join ' | ') `
+                -Items $items `
+                -AllowBack $AllowBack
 
-        if ($selection -match '^(q|quit|exit)$') {
-            exit 0
-        }
-        if ($AllowBack -and $selection -match '^(b|back)$') {
-            return
-        }
+            if ($choice -eq -2) {
+                exit 0
+            }
+            if ($choice -eq -1) {
+                return
+            }
 
-        $index = 0
-        if (-not [int]::TryParse($selection, [ref]$index)) {
-            continue
-        }
-        if ($index -lt 1 -or $index -gt $script:CurrentActions.Count) {
-            continue
-        }
+            $action = $script:CurrentActions[$choice]
+            $resolved = Resolve-Action -Action $action
+            $confirmItems = @(
+                [pscustomobject]@{
+                    Key = '1'
+                    Label = 'Run action'
+                    Hint = "Command: $(Format-DisplayCommand -Resolved $resolved)"
+                },
+                [pscustomobject]@{
+                    Key = '2'
+                    Label = 'Back'
+                    Hint = 'Return to the action list'
+                }
+            )
+            $confirm = Invoke-PortUIChoiceMenu `
+                -Title $action.Title `
+                -Subtitle $action.Description `
+                -Items $confirmItems `
+                -AllowBack $true
 
-        $action = $script:CurrentActions[$index - 1]
-        $resolved = Resolve-Action -Action $action
+            if ($confirm -ne 0) {
+                continue
+            }
 
-        Clear-Host
-        Show-ActionPreview -Action $action -Resolved $resolved
-        $confirm = Read-Host 'Run this action? [Y/n]'
-        if ($confirm -match '^(n|no)$') {
-            continue
+            Exit-PortUIScreen
+            Show-ActionPreview -Action $action -Resolved $resolved
+            $null = Invoke-ResolvedAction -Action $action -Resolved $resolved
+            Wait-PortUIReturn
+            Enter-PortUIScreen
         }
-
-        $null = Invoke-ResolvedAction -Action $action -Resolved $resolved
-        Read-Host 'Press Enter to return to the menu' | Out-Null
+    } finally {
+        Exit-PortUIScreen
     }
 }
 
@@ -996,41 +1214,40 @@ function Show-WorkspaceMenu {
         [string[]]$Projects
     )
 
-    while ($true) {
-        Clear-Host
-        Write-Host 'PortUI Workspace'
-        Write-Host $WorkspaceDir
-        Write-Host "OS: $(Get-HostOSName)"
-        Write-Host ''
+    if ($Projects.Count -eq 0) {
+        throw "No PortUI projects found in workspace: $WorkspaceDir"
+    }
 
-        if ($Projects.Count -eq 0) {
-            throw "No PortUI projects found in workspace: $WorkspaceDir"
-        }
-
-        for ($i = 0; $i -lt $Projects.Count; $i++) {
-            $summary = Get-ManifestSummary -ResolvedManifestDir $Projects[$i]
-            Write-Host ('{0,2}. {1} [{2}]' -f ($i + 1), $summary.Name, $summary.ProjectId)
-            if ($summary.Description) {
-                Write-Host "    $($summary.Description)"
+    Enter-PortUIScreen
+    try {
+        while ($true) {
+            $items = @()
+            for ($i = 0; $i -lt $Projects.Count; $i++) {
+                $summary = Get-ManifestSummary -ResolvedManifestDir $Projects[$i]
+                $items += [pscustomobject]@{
+                    Key = ($i + 1).ToString()
+                    Label = "$($summary.Name) [$($summary.ProjectId)]"
+                    Hint = $summary.Description
+                }
             }
-        }
 
-        Write-Host ''
-        $selection = Read-Host 'Select a project number, or q to quit'
-        if ($selection -match '^(q|quit|exit)$') {
-            exit 0
-        }
+            $choice = Invoke-PortUIChoiceMenu `
+                -Title 'PortUI Workspace' `
+                -Subtitle "$WorkspaceDir | OS: $(Get-HostOSName)" `
+                -Items $items `
+                -AllowBack $false
 
-        $index = 0
-        if (-not [int]::TryParse($selection, [ref]$index)) {
-            continue
-        }
-        if ($index -lt 1 -or $index -gt $Projects.Count) {
-            continue
-        }
+            if ($choice -eq -2) {
+                exit 0
+            }
 
-        Load-ManifestContext -ResolvedManifestDir $Projects[$index - 1] -ResolvedWorkspaceDir $WorkspaceDir
-        Show-ActionMenu -AllowBack $true
+            Load-ManifestContext -ResolvedManifestDir $Projects[$choice] -ResolvedWorkspaceDir $WorkspaceDir
+            Exit-PortUIScreen
+            Show-ActionMenu -AllowBack $true
+            Enter-PortUIScreen
+        }
+    } finally {
+        Exit-PortUIScreen
     }
 }
 

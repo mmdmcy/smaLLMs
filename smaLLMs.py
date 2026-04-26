@@ -247,11 +247,10 @@ class BeautifulSmaLLMsTerminal:
         accuracy = (total_correct / total_samples_done) if total_samples_done else 0.0
 
         print(
-            f"\n{self.CYAN}->{self.RESET}  {self.BOLD}smaLLMs{self.RESET} "
-            f"{self.GRAY}local model benchmarking{self.RESET} "
-            f"{self.RED}x{self.RESET} {self.WHITE}CLI-first leaderboard runner{self.RESET}"
+            f"\n{self.BOLD}smaLLMs{self.RESET} "
+            f"{self.GRAY}local model benchmark run{self.RESET}"
         )
-        print(f"{self.GRAY}Run {self.run_id} | elapsed {self.format_duration(elapsed)}{self.RESET}\n")
+        print(f"{self.GRAY}Run: {self.run_id} | elapsed: {self.format_duration(elapsed)}{self.RESET}\n")
         print(
             f"{self.BOLD}{'Target':<38} {'Done':<9} {'% Right':<9} {'Errors':<8} "
             f"{'Avg Lat':<10} {'Slowest':<10} {'Tok/s':<10} {'State':<10}{self.RESET}"
@@ -327,25 +326,23 @@ class SmaLLMsCLI:
         default_benchmarks = ", ".join(self.local_settings.get("default_benchmarks", DEFAULT_BENCHMARKS))
         print(
             f"""
-{self.terminal.CYAN}+------------------------------------------------------------------------------+{self.terminal.RESET}
-{self.terminal.CYAN}|                          {self.terminal.BOLD}smaLLMs Local CLI{self.terminal.RESET}{self.terminal.CYAN}                                   |{self.terminal.RESET}
-{self.terminal.CYAN}|                  {self.terminal.GRAY}Cross-platform local LLM benchmark runner{self.terminal.RESET}{self.terminal.CYAN}                   |{self.terminal.RESET}
-{self.terminal.CYAN}+------------------------------------------------------------------------------+{self.terminal.RESET}
+{self.terminal.BOLD}smaLLMs Local CLI{self.terminal.RESET}
+{self.terminal.GRAY}Cross-platform local LLM benchmark runner{self.terminal.RESET}
 
-{self.terminal.BOLD}Commands:{self.terminal.RESET}
-  {self.terminal.GREEN}doctor{self.terminal.RESET}     - Check Ollama / LM Studio status and next steps
-  {self.terminal.GREEN}discover{self.terminal.RESET}   - Find local models across supported providers
-  {self.terminal.GREEN}benchmarks{self.terminal.RESET} - Show supported benchmark suites and benchmarks
-  {self.terminal.GREEN}run{self.terminal.RESET}        - Start a benchmark run
-  {self.terminal.GREEN}quick{self.terminal.RESET}      - Run the default core suite on all discovered models
-  {self.terminal.GREEN}status{self.terminal.RESET}     - Show the latest run summary
-  {self.terminal.GREEN}export{self.terminal.RESET}     - Export the latest run for the website
-  {self.terminal.GREEN}clear{self.terminal.RESET}      - Clear the screen
-  {self.terminal.GREEN}exit{self.terminal.RESET}       - Quit
+{self.terminal.BOLD}Commands{self.terminal.RESET}
+  doctor      Check Ollama / LM Studio status and next steps
+  discover    Find local models across supported providers
+  benchmarks  Show supported benchmark suites and benchmarks
+  run         Start a benchmark run
+  quick       Run the default core suite on all discovered models
+  status      Show the latest run summary
+  export      Export the latest run for the website
+  clear       Clear the screen
+  exit        Quit
 
-{self.terminal.BOLD}Interactive Mode:{self.terminal.RESET} arrow keys, space to toggle, enter to confirm
-{self.terminal.BOLD}Local Models:{self.terminal.RESET} if Ollama already has models installed, smaLLMs will reuse them automatically
-{self.terminal.BOLD}Default Core Suite:{self.terminal.RESET} {default_benchmarks}
+{self.terminal.BOLD}Interactive mode{self.terminal.RESET}: arrow keys move, space toggles, enter confirms
+{self.terminal.BOLD}Local models{self.terminal.RESET}: existing Ollama models are reused automatically
+{self.terminal.BOLD}Default core suite{self.terminal.RESET}: {default_benchmarks}
 """
         )
 
