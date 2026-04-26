@@ -1,1 +1,1 @@
-# Web package
+"""Reserved package for future maintained web surfaces."""

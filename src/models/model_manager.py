@@ -205,7 +205,7 @@ def _parse_ollama_list_output(stdout: str) -> List[Dict[str, Any]]:
 def _parse_duration_to_sec(value: str) -> float:
     """Parse Ollama CLI duration strings to seconds."""
     raw = value.strip().lower()
-    match = re.match(r"([0-9.]+)\s*(ns|us|µs|ms|s|m)$", raw)
+    match = re.match(r"([0-9.]+)\s*(ns|us|\u00b5s|ms|s|m)$", raw)
     if not match:
         return 0.0
 
@@ -213,7 +213,7 @@ def _parse_duration_to_sec(value: str) -> float:
     unit = match.group(2)
     if unit == "ns":
         return amount / 1_000_000_000
-    if unit in {"us", "µs"}:
+    if unit in {"us", "\u00b5s"}:
         return amount / 1_000_000
     if unit == "ms":
         return amount / 1_000
@@ -237,12 +237,12 @@ def _parse_ollama_verbose_output(stdout: str) -> Dict[str, Any]:
 
     metrics: Dict[str, Any] = {"response": response_text}
     patterns = {
-        "total_duration": r"total duration:\s*([0-9.a-zA-Zµ]+)",
-        "load_duration": r"load duration:\s*([0-9.a-zA-Zµ]+)",
+        "total_duration": r"total duration:\s*([0-9.a-zA-Z\u00b5]+)",
+        "load_duration": r"load duration:\s*([0-9.a-zA-Z\u00b5]+)",
         "prompt_eval_count": r"prompt eval count:\s*(\d+)",
-        "prompt_eval_duration": r"prompt eval duration:\s*([0-9.a-zA-Zµ]+)",
+        "prompt_eval_duration": r"prompt eval duration:\s*([0-9.a-zA-Z\u00b5]+)",
         "eval_count": r"eval count:\s*(\d+)",
-        "eval_duration": r"eval duration:\s*([0-9.a-zA-Zµ]+)",
+        "eval_duration": r"eval duration:\s*([0-9.a-zA-Z\u00b5]+)",
     }
 
     for key, pattern in patterns.items():

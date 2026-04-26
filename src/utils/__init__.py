@@ -1,1 +1,1 @@
-# Utils package
+"""Utility helpers for the maintained local benchmark pipeline."""

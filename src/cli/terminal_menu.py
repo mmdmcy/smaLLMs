@@ -529,9 +529,9 @@ class TerminalMenuApp:
         self._clear_screen()
         width = max(72, min(shutil.get_terminal_size((120, 40)).columns, 140))
         print(
-            f"{self.CYAN}╔{'═' * (width - 2)}╗{self.RESET}\n"
-            f"{self.CYAN}║ {self.BOLD}{title}{self.RESET}{self.CYAN}{' ' * max(0, width - len(title) - 3)}║{self.RESET}\n"
-            f"{self.CYAN}╚{'═' * (width - 2)}╝{self.RESET}"
+            f"{self.CYAN}+{'-' * (width - 2)}+{self.RESET}\n"
+            f"{self.CYAN}| {self.BOLD}{title}{self.RESET}{self.CYAN}{' ' * max(0, width - len(title) - 3)}|{self.RESET}\n"
+            f"{self.CYAN}+{'-' * (width - 2)}+{self.RESET}"
         )
         print(f"{self.GRAY}{subtitle}{self.RESET}\n")
 
@@ -539,12 +539,12 @@ class TerminalMenuApp:
         for idx in range(start, end):
             option = options[idx]
             is_cursor = idx == cursor
-            cursor_prefix = f"{self.CYAN}›{self.RESET}" if is_cursor else " "
+            cursor_prefix = f"{self.CYAN}>{self.RESET}" if is_cursor else " "
             if multi_select:
                 checkbox = "[x]" if selected and option.value in selected else "[ ]"
                 marker = checkbox
             else:
-                marker = "•"
+                marker = "-"
 
             label_color = self.YELLOW if is_cursor else self.WHITE
             if option.disabled:
@@ -555,11 +555,11 @@ class TerminalMenuApp:
                 print(f"    {self.GRAY}{option.hint}{self.RESET}")
 
         if end < len(options):
-            print(f"\n{self.GRAY}… more options below …{self.RESET}")
+            print(f"\n{self.GRAY}... more options below ...{self.RESET}")
 
-        footer = "Use ↑/↓ to move, Enter to confirm, Q or Esc to go back."
+        footer = "Use arrow keys to move, Enter to confirm, Q or Esc to go back."
         if multi_select:
-            footer = "Use ↑/↓ to move, Space to toggle, A to select all, Enter to confirm, Q or Esc to go back."
+            footer = "Use arrow keys to move, Space to toggle, A to select all, Enter to confirm, Q or Esc to go back."
         print(f"\n{self.GRAY}{footer}{self.RESET}")
         if multi_select:
             print(f"{self.GRAY}Selected: {len(selected or set())}{self.RESET}")
