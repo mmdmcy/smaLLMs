@@ -245,33 +245,35 @@ class LocalBenchmarkOrchestrator:
         benchmark_results: List[Dict[str, Any]] = []
 
         try:
-            for model_name in resolved_models:
-                for benchmark_name in benchmark_names:
-                    LOGGER.info("Running %s on %s", model_name, benchmark_name)
-                    if progress_callback:
-                        progress_callback(
-                            {
-                                "event": "benchmark_started",
-                                "run_id": paths.run_id,
-                                "model_name": model_name,
-                                "benchmark_name": benchmark_name,
-                                "sample_count": sample_count,
-                            }
-                        )
+            try:
+                for model_name in resolved_models:
+                    for benchmark_name in benchmark_names:
+                        LOGGER.info("Running %s on %s", model_name, benchmark_name)
+                        if progress_callback:
+                            progress_callback(
+                                {
+                                    "event": "benchmark_started",
+                                    "run_id": paths.run_id,
+                                    "model_name": model_name,
+                                    "benchmark_name": benchmark_name,
+                                    "sample_count": sample_count,
+                                }
+                            )
 
-                    benchmark_result = await self._run_single_benchmark(
-                        paths=paths,
-                        model_name=model_name,
-                        benchmark_name=benchmark_name,
-                        sample_count=sample_count,
-                        temperature=temperature,
-                        progress_callback=progress_callback,
-                    )
-                    benchmark_results.append(benchmark_result)
-            summary = self._build_run_summary(paths, benchmark_results)
-            run_card_path = self.artifact_store.write_run_card(paths, self._build_run_card(paths, manifest, summary))
-            summary["run_card_path"] = portable_path(run_card_path)
-            self.artifact_store.write_summary(paths, summary)
+                        benchmark_result = await self._run_single_benchmark(
+                            paths=paths,
+                            model_name=model_name,
+                            benchmark_name=benchmark_name,
+                            sample_count=sample_count,
+                            temperature=temperature,
+                            progress_callback=progress_callback,
+                        )
+                        benchmark_results.append(benchmark_result)
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                self._write_run_summary(paths, manifest, benchmark_results, status="cancelled")
+                raise
+            else:
+                self._write_run_summary(paths, manifest, benchmark_results, status="completed")
         finally:
             await self.model_manager.cleanup()
 
@@ -286,6 +288,36 @@ class LocalBenchmarkOrchestrator:
             exporter.export_run(paths.run_id)
 
         return self.artifact_store.load_run(paths.run_id)
+
+    def _write_run_summary(
+        self,
+        paths: RunPaths,
+        manifest: Dict[str, Any],
+        benchmark_results: List[Dict[str, Any]],
+        status: str,
+    ) -> Dict[str, Any]:
+        """Persist a complete or partial run summary."""
+        summary = self._build_run_summary(paths, benchmark_results)
+        planned_evaluations = len(manifest.get("models", [])) * len(manifest.get("benchmarks", []))
+        summary["status"] = status
+        summary["planned"] = {
+            "models": len(manifest.get("models", [])),
+            "benchmarks": len(manifest.get("benchmarks", [])),
+            "evaluations": planned_evaluations,
+            "samples_per_benchmark": int(manifest.get("samples_per_benchmark") or 0),
+        }
+        summary["totals"]["planned_evaluations"] = planned_evaluations
+        summary["totals"]["remaining_evaluations"] = max(
+            planned_evaluations - int(summary["totals"].get("evaluations", 0)),
+            0,
+        )
+        if status != "completed":
+            summary["ended_at"] = utcnow_iso()
+
+        run_card_path = self.artifact_store.write_run_card(paths, self._build_run_card(paths, manifest, summary))
+        summary["run_card_path"] = portable_path(run_card_path)
+        self.artifact_store.write_summary(paths, summary)
+        return summary
 
     def _build_run_card(self, paths: RunPaths, manifest: Dict[str, Any], summary: Dict[str, Any]) -> str:
         """Create a compact human-readable report for one benchmark run."""
@@ -302,9 +334,11 @@ class LocalBenchmarkOrchestrator:
             "",
             "## Result",
             "",
+            f"- Status: {summary.get('status', 'completed')}",
             f"- Accuracy: {totals.get('accuracy', 0.0):.4f} "
             f"(95% CI {totals.get('accuracy_ci95_low', 0.0):.4f}-{totals.get('accuracy_ci95_high', 0.0):.4f})",
             f"- Samples: {totals.get('samples', 0)}",
+            f"- Evaluations: {totals.get('evaluations', 0)}/{totals.get('planned_evaluations', totals.get('evaluations', 0))}",
             f"- Models: {totals.get('models', 0)}",
             f"- Benchmarks: {totals.get('benchmarks', 0)}",
             f"- Response rate: {totals.get('response_rate', 0.0):.4f}",

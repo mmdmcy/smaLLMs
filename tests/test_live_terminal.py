@@ -18,9 +18,9 @@ class FakeTTY(io.StringIO):
 
 
 class LiveTerminalTests(unittest.TestCase):
-    """Validate full-screen progress rendering without scrollback pollution."""
+    """Validate live progress rendering behavior."""
 
-    def test_live_renderer_uses_alternate_screen_buffer(self) -> None:
+    def test_live_renderer_uses_normal_scrollback_buffer(self) -> None:
         output = FakeTTY()
         with mock.patch.object(sys, "stdout", output):
             terminal = BeautifulSmaLLMsTerminal()
@@ -28,10 +28,10 @@ class LiveTerminalTests(unittest.TestCase):
             terminal.finish_live_screen()
 
         rendered = output.getvalue()
-        self.assertIn("\033[?1049h", rendered)
         self.assertIn("\033[?25l", rendered)
         self.assertIn("\033[?25h", rendered)
-        self.assertIn("\033[?1049l", rendered)
+        self.assertNotIn("\033[?1049h", rendered)
+        self.assertNotIn("\033[?1049l", rendered)
 
     def test_finish_live_screen_is_idempotent(self) -> None:
         output = FakeTTY()
@@ -43,8 +43,45 @@ class LiveTerminalTests(unittest.TestCase):
             terminal.finish_live_screen()
 
         rendered = output.getvalue()
-        self.assertEqual(rendered.count("\033[?1049h"), 1)
-        self.assertEqual(rendered.count("\033[?1049l"), 1)
+        self.assertEqual(rendered.count("\033[?25l"), 1)
+        self.assertEqual(rendered.count("\033[?25h"), 1)
+
+    def test_completed_benchmark_updates_actual_sample_total(self) -> None:
+        output = FakeTTY()
+        with mock.patch.object(sys, "stdout", output):
+            terminal = BeautifulSmaLLMsTerminal()
+            terminal.start_run("run-test", ["model-a"], ["aime_2025"], 100)
+            terminal.handle_event(
+                {
+                    "event": "sample_completed",
+                    "model_name": "model-a",
+                    "benchmark_name": "aime_2025",
+                    "sample_index": 30,
+                    "total_samples": 30,
+                    "correct_count": 12,
+                    "error_count": 0,
+                    "sample": {"latency_sec": 1.0},
+                }
+            )
+            terminal.handle_event(
+                {
+                    "event": "benchmark_completed",
+                    "model_name": "model-a",
+                    "benchmark_name": "aime_2025",
+                    "benchmark_result": {
+                        "metrics": {
+                            "sample_count": 30,
+                            "correct_count": 12,
+                            "error_count": 0,
+                        }
+                    },
+                }
+            )
+            terminal.finish_live_screen()
+
+        rendered = output.getvalue()
+        self.assertIn("30/30", rendered)
+        self.assertIn("(1/1 completed)", rendered)
 
 
 if __name__ == "__main__":

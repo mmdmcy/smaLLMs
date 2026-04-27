@@ -195,6 +195,23 @@ class WebsiteExporterTests(unittest.TestCase):
         synced_payload = json.loads(synced_session.read_text(encoding="utf-8"))
         self.assertEqual(synced_payload["run"]["run_id"], self.run_id)
 
+    def test_exporter_uses_benchmark_files_when_summary_is_missing(self) -> None:
+        (self.artifacts_dir / "runs" / self.run_id / "summary.json").unlink()
+        exporter = WebsiteExporter(
+            artifacts_dir=str(self.artifacts_dir),
+            output_dir=str(self.output_dir),
+            sync_dir=None,
+        )
+
+        exporter.export_run()
+
+        session = json.loads((self.output_dir / "latest" / "session.json").read_text(encoding="utf-8"))
+        exported_summary = json.loads((self.output_dir / "latest" / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(session["summary"]["totals"]["samples"], 1)
+        self.assertEqual(session["evaluations"][0]["evaluation_id"], "gsm8k__qwen3.5_0.8b")
+        self.assertEqual(exported_summary["status"], "incomplete")
+        self.assertEqual(len(exported_summary["evaluations"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
