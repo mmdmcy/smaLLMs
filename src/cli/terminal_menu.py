@@ -397,9 +397,29 @@ class TerminalMenuApp:
         summary = run_data.get("summary", {})
         totals = summary.get("totals", {})
         leaderboard = summary.get("leaderboard", [])
+        benchmark_results = run_data.get("benchmark_results", [])
+
+        if not summary and benchmark_results:
+            total_samples = sum(int(result.get("metrics", {}).get("sample_count", 0)) for result in benchmark_results)
+            total_correct = sum(int(result.get("metrics", {}).get("correct_count", 0)) for result in benchmark_results)
+            totals = {
+                "models": len({result.get("model", {}).get("name") for result in benchmark_results}),
+                "benchmarks": len({result.get("benchmark_name") for result in benchmark_results}),
+                "evaluations": len(benchmark_results),
+                "completed_evaluations": len(
+                    [result for result in benchmark_results if result.get("status") == "completed"]
+                ),
+                "samples": total_samples,
+                "accuracy": (total_correct / total_samples) if total_samples else 0.0,
+                "errors": sum(int(result.get("metrics", {}).get("error_count", 0)) for result in benchmark_results),
+                "total_tokens": sum(
+                    int(result.get("metrics", {}).get("total_tokens", 0)) for result in benchmark_results
+                ),
+            }
 
         lines = [
             f"Run ID: {latest_run_id}",
+            f"Status: {summary.get('status', 'incomplete' if benchmark_results else 'unknown')}",
             f"Models: {totals.get('models', 0)}",
             f"Benchmarks: {totals.get('benchmarks', 0)}",
             f"Evaluations: {totals.get('evaluations', 0)}",

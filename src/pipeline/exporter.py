@@ -46,12 +46,15 @@ class WebsiteExporter:
         run_dir.mkdir(parents=True, exist_ok=True)
 
         summary = run_data.get("summary", {})
-        evaluations = self._build_evaluations_bundle(summary.get("evaluations", []))
+        raw_evaluations = summary.get("evaluations") or run_data.get("benchmark_results", [])
+        evaluations = self._build_evaluations_bundle(raw_evaluations)
         leaderboard = self._enrich_leaderboard(summary.get("leaderboard", []), evaluations)
         session_summary = self._make_session_summary(summary, evaluations)
         exported_summary = dict(summary)
+        if not exported_summary and raw_evaluations:
+            exported_summary["status"] = "incomplete"
         exported_summary["manifest_path"] = portable_path(exported_summary.get("manifest_path", "")) if exported_summary.get("manifest_path") else None
-        exported_summary["evaluations"] = [self._sanitize_evaluation_record(item) for item in summary.get("evaluations", [])]
+        exported_summary["evaluations"] = [self._sanitize_evaluation_record(item) for item in raw_evaluations]
         exported_summary["leaderboard"] = leaderboard
         exported_summary["totals"] = session_summary.get("totals", {})
         evaluation_briefs = [self._make_evaluation_brief(evaluation) for evaluation in evaluations]

@@ -91,7 +91,7 @@ class BeautifulSmaLLMsTerminal:
         self.run_id: str = ""
         self.samples_per_benchmark: int = 0
         self.render_started = False
-        self._alternate_screen_active = False
+        self._live_screen_active = False
         self.start_time = time.time()
         self._enable_virtual_terminal_sequences()
 
@@ -111,21 +111,21 @@ class BeautifulSmaLLMsTerminal:
             return
 
     def enter_live_screen(self) -> None:
-        """Move live progress into the terminal's alternate screen buffer."""
-        if not self.is_tty or self._alternate_screen_active:
+        """Prepare the normal terminal buffer for live progress rendering."""
+        if not self.is_tty or self._live_screen_active:
             return
-        print("\033[?1049h\033[?25l\033[2J\033[H", end="")
+        print("\033[?25l\033[2J\033[H", end="")
         sys.stdout.flush()
-        self._alternate_screen_active = True
+        self._live_screen_active = True
 
     def finish_live_screen(self) -> None:
-        """Restore the normal terminal buffer after live progress rendering."""
+        """Restore cursor visibility after live progress rendering."""
         self.render_started = False
-        if not self.is_tty or not self._alternate_screen_active:
+        if not self.is_tty or not self._live_screen_active:
             return
-        print("\033[?25h\033[?1049l", end="")
+        print("\033[?25h", end="")
         sys.stdout.flush()
-        self._alternate_screen_active = False
+        self._live_screen_active = False
 
     def clear_screen(self) -> None:
         """Clear the screen only for interactive terminals."""
@@ -184,6 +184,7 @@ class BeautifulSmaLLMsTerminal:
         if event_type == "benchmark_started" and row:
             row.running = True
         elif event_type == "sample_completed" and row:
+            row.total_tests = int(event.get("total_samples", row.total_tests))
             row.tests_done = int(event.get("sample_index", row.tests_done))
             row.correct = int(event.get("correct_count", row.correct))
             row.errors = int(event.get("error_count", row.errors))
@@ -202,6 +203,7 @@ class BeautifulSmaLLMsTerminal:
         elif event_type == "benchmark_completed" and row:
             metrics = event.get("benchmark_result", {}).get("metrics", {})
             row.tests_done = int(metrics.get("sample_count", row.tests_done))
+            row.total_tests = row.tests_done
             row.correct = int(metrics.get("correct_count", row.correct))
             row.errors = int(metrics.get("error_count", row.errors))
             row.avg_latency = float(metrics.get("avg_latency_sec", row.avg_latency))
@@ -450,12 +452,37 @@ class SmaLLMsCLI:
         summary = run_data.get("summary", {})
         totals = summary.get("totals", {})
         leaderboard = summary.get("leaderboard", [])
+        benchmark_results = run_data.get("benchmark_results", [])
+
+        if not summary and benchmark_results:
+            total_samples = sum(int(result.get("metrics", {}).get("sample_count", 0)) for result in benchmark_results)
+            total_correct = sum(int(result.get("metrics", {}).get("correct_count", 0)) for result in benchmark_results)
+            totals = {
+                "models": len({result.get("model", {}).get("name") for result in benchmark_results}),
+                "benchmarks": len({result.get("benchmark_name") for result in benchmark_results}),
+                "evaluations": len(benchmark_results),
+                "completed_evaluations": len(
+                    [result for result in benchmark_results if result.get("status") == "completed"]
+                ),
+                "samples": total_samples,
+                "accuracy": (total_correct / total_samples) if total_samples else 0.0,
+                "total_tokens": sum(
+                    int(result.get("metrics", {}).get("total_tokens", 0)) for result in benchmark_results
+                ),
+            }
 
         if json_output:
             print(json.dumps(run_data, indent=2))
             return
 
         print(f"\n{self.terminal.BOLD}Latest Run{self.terminal.RESET} {latest_run_id}")
+        if not summary and benchmark_results:
+            planned = len(run_data.get("manifest", {}).get("models", [])) * len(
+                run_data.get("manifest", {}).get("benchmarks", [])
+            )
+            print(f"  Status: interrupted before final summary ({len(benchmark_results)}/{planned} evaluations saved)")
+        elif summary.get("status"):
+            print(f"  Status: {summary['status']}")
         print(f"  Models: {totals.get('models', 0)}")
         print(f"  Benchmarks: {totals.get('benchmarks', 0)}")
         print(f"  Evaluations: {totals.get('evaluations', 0)}")
