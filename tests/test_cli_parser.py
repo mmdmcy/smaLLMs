@@ -24,6 +24,14 @@ class CLITests(unittest.TestCase):
         args = parser.parse_args(["doctor"])
         self.assertEqual(args.command, "doctor")
 
+    def test_agent_harness_command_is_supported(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["agent-harness", "--dry-run", "--harnesses", "pi", "--sync-dir", "../websmaLLMs/public/data"])
+        self.assertEqual(args.command, "agent-harness")
+        self.assertTrue(args.dry_run)
+        self.assertEqual(args.harnesses, ["pi"])
+        self.assertEqual(args.sync_dir, "../websmaLLMs/public/data")
+
 
 if __name__ == "__main__":
     unittest.main()

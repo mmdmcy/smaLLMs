@@ -4,6 +4,11 @@ smaLLMs is designed for local, open-weight model evaluation on a single machine.
 It is intentionally narrower than hosted benchmark platforms: the goal is to make
 small local model runs inspectable, repeatable, and easy to export.
 
+The optional agent-harness runner is a separate comparison mode. It evaluates
+coding-agent harnesses such as Pi, OpenCode, and Codex CLI on deterministic
+local code-edit fixtures. Those runs measure the tool loop around a model, not
+the raw capability of a local Ollama or LM Studio model.
+
 ## Scope
 
 The maintained runner evaluates local models served through Ollama or LM Studio.
@@ -69,3 +74,46 @@ Before committing a run card, rerun from a clean git tree so the card records
 
 Do not edit run cards to improve results. If a run has high invalid-prediction or
 raw-fallback rates, treat that as part of the result.
+
+## Agent-Harness Runs
+
+Use the agent-harness mode for local workflow comparisons between coding-agent
+CLIs:
+
+```bash
+python smaLLMs.py agent-harness --dry-run
+python smaLLMs.py agent-harness --harnesses pi opencode codex
+```
+
+Dry runs validate fixture generation and command construction without spending
+model calls. Real runs invoke the selected external harnesses and then verify
+the result with deterministic `unittest` commands. Raw logs and workspaces are
+written under `artifacts/agent_harness/`, which is ignored by git.
+
+Each real row records:
+
+- agent and verification-test start/end timestamps, return codes, timeout flags, and duration
+- changed files, unexpected changed files, diff stat, and a SHA-256 for the captured patch
+- redacted stdout/stderr log paths, byte counts, character counts, and line counts
+- best-effort process telemetry from GNU `time -v`, including peak resident set size when available
+- harness-reported token usage, cost, and context fields when the CLI prints them
+
+Missing telemetry is represented as `null` with a `source` value such as `not_reported`. In the
+current CLI output, Codex CLI reports a single total token count, while Pi and OpenCode do not report
+comparable per-run token or context accounting in captured stdout/stderr. Treat memory values as
+local subprocess telemetry, not provider-side memory.
+
+The detailed audit artifact remains:
+
+```bash
+artifacts/agent_harness/runs/<run_id>/summary.json
+```
+
+The website-facing payload is intentionally smaller and separate from the local Ollama benchmark
+session schema:
+
+```bash
+artifacts/agent_harness/runs/<run_id>/web_summary.json
+../websmaLLMs/public/data/agent-harness/latest.json
+../websmaLLMs/public/data/agent-harness/runs/<run_id>.json
+```
