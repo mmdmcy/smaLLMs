@@ -189,6 +189,27 @@ Run the default core suite on every discovered local model:
 python3 smaLLMs.py quick --samples 3
 ```
 
+Run a coding-agent harness comparison:
+
+```bash
+python3 smaLLMs.py agent-harness --dry-run
+python3 smaLLMs.py agent-harness --harnesses pi opencode codex --tasks median_bugfix cli_feature path_safety
+```
+
+The agent-harness runner compares external coding-agent CLIs on deterministic local code-edit fixtures.
+It currently knows about Pi, OpenCode, and Codex CLI, using GPT-5.5/xhigh defaults where those
+harnesses expose them. Dry runs prepare the fixtures and commands without calling model providers.
+Real runs write artifacts under `artifacts/agent_harness/runs/<run_id>/`.
+Current local findings are summarized in [`docs/agent-harness-findings.md`](docs/agent-harness-findings.md).
+
+Agent-harness artifacts include per-row timestamps, return codes, duration, changed files, patch
+hashes, log byte/line counts, best-effort peak RSS via GNU `time -v`, reported token usage when the
+harness prints it, and explicit `null` values for token/context/cost fields the harness does not
+report. The CLI also mirrors a compact public JSON to the sibling website by default:
+
+- `../websmaLLMs/public/data/agent-harness/latest.json`
+- `../websmaLLMs/public/data/agent-harness/runs/<run_id>.json`
+
 Run a specific suite:
 
 ```bash
@@ -320,16 +341,19 @@ That file includes:
 When the sibling repo exists at `../websmaLLMs`, the exporter also mirrors the latest session into:
 
 - `../websmaLLMs/public/data/latest-session.json`
+- `../websmaLLMs/public/data/agent-harness/latest.json` for coding-agent harness runs
 
 That means the website can either:
 
 - auto-load the mirrored session on startup
+- auto-load the latest mirrored agent-harness run in its harness panel
 - import any exported `session.json` manually through the UI
 
 If you want to override the mirror location, use:
 
 ```bash
 python3 run_local_benchmarks.py export --sync-dir /path/to/websmaLLMs/public/data
+python3 smaLLMs.py agent-harness --sync-dir /path/to/websmaLLMs/public/data
 ```
 
 ## Benchmark suites

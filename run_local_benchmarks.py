@@ -94,6 +94,19 @@ def _handle_export(args: argparse.Namespace) -> None:
     print(json.dumps(exported, indent=2))
 
 
+def _handle_agent_harness(args: argparse.Namespace) -> None:
+    from src.pipeline.agent_harness import DEFAULT_AGENT_HARNESS_WEBSITE_SYNC_DIR, run_agent_harness_eval
+
+    summary = run_agent_harness_eval(
+        harnesses=_parse_list(args.harnesses),
+        tasks=_parse_list(args.tasks),
+        timeout_seconds=args.timeout_seconds,
+        dry_run=args.dry_run,
+        sync_dir=args.sync_dir if args.sync_dir is not None else DEFAULT_AGENT_HARNESS_WEBSITE_SYNC_DIR,
+    )
+    print(json.dumps(summary, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI parser."""
     parser = argparse.ArgumentParser(description="Run local smaLLMs benchmarks and export website data.")
@@ -129,6 +142,14 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--output-dir", help="Website export directory. Defaults to local_benchmarks.website_export_dir.")
     export_parser.add_argument("--sync-dir", help="Optional website public/data directory. Defaults to local_benchmarks.website_sync_dir.")
     export_parser.set_defaults(handler=_handle_export)
+
+    harness_parser = subparsers.add_parser("agent-harness", help="Run or dry-run coding-agent harness evals.")
+    harness_parser.add_argument("--harnesses", nargs="*", help="Harness keys: pi, opencode, codex.")
+    harness_parser.add_argument("--tasks", nargs="*", help="Task keys. Defaults to all tasks.")
+    harness_parser.add_argument("--timeout-seconds", type=int, default=900, help="Per-agent timeout in seconds.")
+    harness_parser.add_argument("--dry-run", action="store_true", help="Prepare fixtures without calling model providers.")
+    harness_parser.add_argument("--sync-dir", help="Optional website public/data directory for agent-harness JSON.")
+    harness_parser.set_defaults(handler=_handle_agent_harness)
 
     return parser
 

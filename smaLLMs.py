@@ -783,6 +783,7 @@ def build_parser() -> argparse.ArgumentParser:
             "run",
             "local-run",
             "quick",
+            "agent-harness",
             "status",
             "export",
         ],
@@ -794,9 +795,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--all-local", action="store_true", help="Run across all discovered local models.")
     parser.add_argument("--no-export", action="store_true", help="Skip website export after a run.")
     parser.add_argument("--offline", action="store_true", help="Disallow remote dataset downloads; require warmed benchmark cache.")
+    parser.add_argument("--harnesses", nargs="*", help="Agent harnesses for agent-harness: pi, opencode, codex.")
+    parser.add_argument("--tasks", nargs="*", help="Agent harness task keys. Defaults to all tasks.")
+    parser.add_argument("--timeout-seconds", type=int, default=900, help="Per-agent timeout for agent-harness runs.")
+    parser.add_argument("--dry-run", action="store_true", help="Prepare agent-harness fixtures without calling model providers.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON for doctor/discover/benchmarks/status.")
     parser.add_argument("--run-id", help="Run id for export; defaults to the latest run.")
-    parser.add_argument("--sync-dir", help="Optional website public/data directory to mirror the exported session bundle into.")
+    parser.add_argument("--sync-dir", help="Optional website public/data directory for exported sessions and agent-harness JSON.")
     return parser
 
 
@@ -834,6 +839,40 @@ def main() -> None:
             )
         elif command == "quick":
             asyncio.run(app.run_quick(samples=args.samples or 3, offline=args.offline))
+        elif command == "agent-harness":
+            from src.pipeline.agent_harness import DEFAULT_AGENT_HARNESS_WEBSITE_SYNC_DIR, run_agent_harness_eval
+
+            def show_agent_harness_progress(event: Dict[str, Any]) -> None:
+                if event.get("event") == "agent_harness_row_started":
+                    mode = "dry-run" if event.get("dry_run") else "run"
+                    print(f"Starting {mode}: {event['harness']} / {event['task']}")
+                elif event.get("event") == "agent_harness_row_completed":
+                    print(
+                        f"Finished: {event['harness']} / {event['task']} "
+                        f"{event['status']} in {event['duration_seconds']:.1f}s"
+                    )
+
+            result = run_agent_harness_eval(
+                harnesses=_parse_list(args.harnesses),
+                tasks=_parse_list(args.tasks),
+                timeout_seconds=args.timeout_seconds,
+                dry_run=args.dry_run,
+                sync_dir=args.sync_dir if args.sync_dir is not None else DEFAULT_AGENT_HARNESS_WEBSITE_SYNC_DIR,
+                progress_callback=None if args.json else show_agent_harness_progress,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                totals = result["totals"]
+                print(f"Run ID: {result['run_id']}")
+                print(f"Mode: {result['mode']}")
+                print(f"Rows: {totals['rows']}")
+                print(f"Passed: {totals['passed']}")
+                print(f"Failed: {totals['failed']}")
+                print(f"Dry run rows: {totals['dry_run']}")
+                print(f"Artifacts: {result['run_dir']}")
+                if result.get("web_sync"):
+                    print(f"Website JSON: {result['web_sync']['sync/agent-harness/latest.json']}")
         elif command == "status":
             app.show_status(json_output=args.json)
         elif command == "export":
