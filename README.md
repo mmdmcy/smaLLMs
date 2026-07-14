@@ -210,6 +210,25 @@ report. The CLI also mirrors a compact public JSON to the sibling website by def
 - `../websmaLLMs/public/data/agent-harness/latest.json`
 - `../websmaLLMs/public/data/agent-harness/runs/<run_id>.json`
 
+Run a separate Codex reasoning-effort sweep. This is deliberately separate from both the normal
+Ollama/LM Studio session feed and the harness-comparison feed:
+
+```bash
+python3 run_local_benchmarks.py reasoning-sweep --tasks median_bugfix
+```
+
+The default matrix follows the current Codex catalog: Sol and Terra at `low`, `medium`, `high`,
+`xhigh`, `max`, and `ultra`; Luna at `low`, `medium`, `high`, `xhigh`, and `max`. Codex CLI does
+not expose a sampling-temperature control for this workflow, so the third feed is named
+`reasoning-efforts` and records `sampling_temperature: null` explicitly. The public export is:
+
+- `../websmaLLMs/public/data/reasoning-efforts/latest.json`
+- `../websmaLLMs/public/data/reasoning-efforts/runs/<run_id>.json`
+
+Use `--tasks median_bugfix` for a lower-usage effort curve or omit it for the full three-task
+fixture comparison. Interrupted sweeps keep completed per-variant artifacts under
+`artifacts/reasoning_sweep/`; only completed variants should be promoted to a public latest feed.
+
 Run a specific suite:
 
 ```bash

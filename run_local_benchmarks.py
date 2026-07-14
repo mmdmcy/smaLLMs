@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import inspect
 import json
+import sys
 from typing import List, Optional
 
 from src.pipeline.config import DEFAULT_CONFIG_PATH
@@ -107,6 +108,37 @@ def _handle_agent_harness(args: argparse.Namespace) -> None:
     print(json.dumps(summary, indent=2))
 
 
+def _handle_reasoning_sweep(args: argparse.Namespace) -> None:
+    from src.pipeline.agent_harness import DEFAULT_AGENT_HARNESS_WEBSITE_SYNC_DIR
+    from src.pipeline.reasoning_sweep import run_reasoning_effort_sweep
+
+    def progress(event: dict) -> None:
+        if event.get("event") in {"reasoning_variant_started", "reasoning_variant_completed"}:
+            print(
+                f"{event['event']}: {event.get('model')} {event.get('reasoning_effort')}",
+                file=sys.stderr,
+                flush=True,
+            )
+        elif event.get("event") == "agent_harness_row_completed":
+            print(
+                f"row: {event.get('model')} {event.get('reasoning_effort')} {event.get('task')} {event.get('status')}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    payload = run_reasoning_effort_sweep(
+        models=_parse_list(args.models),
+        efforts=_parse_list(args.efforts),
+        tasks=_parse_list(args.tasks),
+        artifacts_dir=args.artifacts_dir,
+        timeout_seconds=args.timeout_seconds,
+        dry_run=args.dry_run,
+        sync_dir=args.sync_dir if args.sync_dir is not None else DEFAULT_AGENT_HARNESS_WEBSITE_SYNC_DIR,
+        progress_callback=progress,
+    )
+    print(json.dumps(payload, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI parser."""
     parser = argparse.ArgumentParser(description="Run local smaLLMs benchmarks and export website data.")
@@ -150,6 +182,23 @@ def build_parser() -> argparse.ArgumentParser:
     harness_parser.add_argument("--dry-run", action="store_true", help="Prepare fixtures without calling model providers.")
     harness_parser.add_argument("--sync-dir", help="Optional website public/data directory for agent-harness JSON.")
     harness_parser.set_defaults(handler=_handle_agent_harness)
+
+    sweep_parser = subparsers.add_parser(
+        "reasoning-sweep",
+        help="Run GPT-5.6 Codex reasoning-effort variants and export a separate website JSON feed.",
+    )
+    sweep_parser.add_argument("--models", nargs="*", help="GPT-5.6 model slugs. Defaults to Sol, Terra, and Luna.")
+    sweep_parser.add_argument(
+        "--efforts",
+        nargs="*",
+        help="Reasoning efforts such as low, medium, high, xhigh, max, or ultra. Defaults to each model's supported levels.",
+    )
+    sweep_parser.add_argument("--tasks", nargs="*", help="Fixture task keys. Defaults to all agent-harness tasks.")
+    sweep_parser.add_argument("--artifacts-dir", default="artifacts/reasoning_sweep", help="Root directory for sweep artifacts.")
+    sweep_parser.add_argument("--timeout-seconds", type=int, default=900, help="Per-agent timeout in seconds.")
+    sweep_parser.add_argument("--dry-run", action="store_true", help="Prepare every variant without calling model providers.")
+    sweep_parser.add_argument("--sync-dir", help="Optional website public/data directory for reasoning-effort JSON.")
+    sweep_parser.set_defaults(handler=_handle_reasoning_sweep)
 
     return parser
 
