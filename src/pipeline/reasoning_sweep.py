@@ -78,7 +78,7 @@ def _sync_paths(sync_dir: str | Path, run_id: str) -> Dict[str, str]:
 
 
 def _compact_variant(result: Dict[str, Any], model: str, effort: str) -> Dict[str, Any]:
-    web_path = Path(str(result["web_summary_path"]))
+    web_path = Path(str(result["web_summary_path"])).expanduser()
     web_summary = json.loads(web_path.read_text(encoding="utf-8"))
     aggregate = (web_summary.get("harnesses") or [{}])[0]
     variant_id = _variant_id(model, effort)

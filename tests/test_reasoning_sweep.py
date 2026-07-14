@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from run_local_benchmarks import build_parser
-from src.pipeline.reasoning_sweep import run_reasoning_effort_sweep
+from src.pipeline.reasoning_sweep import _compact_variant, run_reasoning_effort_sweep
 
 
 class ReasoningSweepTests(unittest.TestCase):
@@ -72,6 +74,29 @@ class ReasoningSweepTests(unittest.TestCase):
             self.assertEqual(json.loads(latest_path.read_text(encoding="utf-8"))["run_id"], run_id)
             self.assertEqual(json.loads(meta_path.read_text(encoding="utf-8"))["run_id"], run_id)
             self.assertEqual(pointer_path.read_text(encoding="utf-8").strip(), run_id)
+
+    def test_compact_variant_expands_portable_home_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            web_path = root / "web_summary.json"
+            web_path.write_text(
+                json.dumps({"harnesses": [{}], "results": []}),
+                encoding="utf-8",
+            )
+            result = {
+                "run_id": "agent-harness-test",
+                "summary_path": "~/summary.json",
+                "web_summary_path": "~/web_summary.json",
+                "run_dir": "~/run",
+            }
+
+            with patch.dict(
+                os.environ,
+                {"HOME": str(root), "USERPROFILE": str(root)},
+            ):
+                compact = _compact_variant(result, "gpt-5.6-sol", "low")
+
+            self.assertEqual(compact["run_id"], "agent-harness-test")
 
     def test_unknown_reasoning_effort_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
