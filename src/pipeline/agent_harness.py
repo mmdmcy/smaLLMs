@@ -17,7 +17,7 @@ import re
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -993,9 +993,20 @@ def run_agent_harness_eval(
     dry_run: bool = False,
     sync_dir: Optional[str | Path] = None,
     progress_callback: ProgressCallback = None,
+    model_override: Optional[str] = None,
+    reasoning_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run or dry-run the local agent-harness comparison."""
-    selected_harnesses = _select_keys(harnesses, DEFAULT_HARNESSES, "harness")
+    harness_registry = dict(DEFAULT_HARNESSES)
+    if model_override is not None or reasoning_override is not None:
+        base_codex = harness_registry["codex"]
+        harness_registry["codex"] = replace(
+            base_codex,
+            model=model_override or base_codex.model,
+            reasoning=reasoning_override or base_codex.reasoning,
+        )
+
+    selected_harnesses = _select_keys(harnesses, harness_registry, "harness")
     selected_tasks = _select_keys(tasks, DEFAULT_TASKS, "task")
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
@@ -1008,9 +1019,14 @@ def run_agent_harness_eval(
     run_dir.mkdir(parents=True, exist_ok=False)
 
     available_harnesses = list_agent_harnesses()
+    for entry in available_harnesses:
+        configured = harness_registry.get(entry["key"])
+        if configured is not None:
+            entry["model"] = configured.model
+            entry["reasoning"] = configured.reasoning
     results: List[Dict[str, Any]] = []
     for harness_key in selected_harnesses:
-        harness = DEFAULT_HARNESSES[harness_key]
+        harness = harness_registry[harness_key]
         harness_path = shutil.which(harness.command)
         if not harness_path and not dry_run:
             raise FileNotFoundError(f"{harness.command} not found on PATH")

@@ -117,3 +117,29 @@ artifacts/agent_harness/runs/<run_id>/web_summary.json
 ../websmaLLMs/public/data/agent-harness/latest.json
 ../websmaLLMs/public/data/agent-harness/runs/<run_id>.json
 ```
+
+## Codex Reasoning-Effort Runs
+
+Reasoning-effort sweeps are a third, separate data surface. They compare Codex CLI model/effort
+pairs, not Ollama/LM Studio inference and not different harness implementations:
+
+```bash
+python3 run_local_benchmarks.py reasoning-sweep --tasks median_bugfix
+```
+
+The current Codex catalog exposes Sol and Terra at `low`, `medium`, `high`, `xhigh`, `max`, and
+`ultra`, and Luna at `low`, `medium`, `high`, `xhigh`, and `max`. This surface does not set or
+measure sampling temperature; it records `sampling_temperature: null` and names the control
+`reasoning_effort` so the displayed result is not misinterpreted.
+
+Sweep artifacts are stored under `artifacts/reasoning_sweep/`. The compact website feed is kept
+separate from the other two feeds:
+
+```text
+../websmaLLMs/public/data/latest-session.json
+../websmaLLMs/public/data/agent-harness/latest.json
+../websmaLLMs/public/data/reasoning-efforts/latest.json
+```
+
+An interrupted sweep may leave completed per-variant artifacts without a sweep-level export. Do
+not publish incomplete variants as if they were finished; mark a partial export explicitly.

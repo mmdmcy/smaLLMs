@@ -67,6 +67,30 @@ class AgentHarnessTests(unittest.TestCase):
             self.assertTrue((Path(tmpdir) / "latest-web-summary.json").exists())
             self.assertTrue((run_dir / "workspaces" / "pi" / "median_bugfix" / "calcstats" / "stats.py").exists())
 
+    def test_codex_model_and_reasoning_overrides_are_run_local(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary = run_agent_harness_eval(
+                harnesses=["codex"],
+                tasks=["median_bugfix"],
+                artifacts_dir=Path(tmpdir),
+                timeout_seconds=30,
+                dry_run=True,
+                model_override="gpt-test-model",
+                reasoning_override="low",
+            )
+
+            row = summary["results"][0]
+            self.assertEqual(row["model"], "gpt-test-model")
+            self.assertEqual(row["reasoning"], "low")
+            self.assertIn("gpt-test-model", row["command"])
+            self.assertIn('model_reasoning_effort="low"', row["command"])
+
+            catalog_entry = next(entry for entry in summary["available_harnesses"] if entry["key"] == "codex")
+            self.assertEqual(catalog_entry["model"], "gpt-test-model")
+            self.assertEqual(catalog_entry["reasoning"], "low")
+            self.assertEqual(DEFAULT_HARNESSES["codex"].model, "gpt-5.5")
+            self.assertEqual(DEFAULT_HARNESSES["codex"].reasoning, "xhigh")
+
     def test_agent_harness_sync_writes_compact_website_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             artifacts_dir = Path(tmpdir) / "artifacts"
