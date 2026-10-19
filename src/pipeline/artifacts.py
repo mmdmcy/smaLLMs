@@ -88,20 +88,26 @@ def portable_path(value: str | Path) -> str:
     except ValueError:
         pass
 
-    try:
-        relative = os.path.relpath(resolved, cwd)
-        if relative and relative != ".":
-            return Path(relative).as_posix()
-    except ValueError:
-        pass
-
     home = Path.home().resolve()
+    # A relative path into another user's home ("../../otheruser/x") or through
+    # a home directory ("../home/user/x") would embed a username; skip those.
+    in_other_home = home.parent in resolved.parents and home not in resolved.parents and resolved != home
+    if not in_other_home:
+        try:
+            relative = os.path.relpath(resolved, cwd)
+            if relative and relative != "." and not {"home", "Users"} & set(Path(relative).parts):
+                return Path(relative).as_posix()
+        except ValueError:
+            pass
+
     try:
         return (Path("~") / resolved.relative_to(home)).as_posix()
     except ValueError:
         pass
 
     filtered_parts = [part for part in resolved.parts if part not in {"", resolved.anchor, os.sep}]
+    if len(filtered_parts) > 2 and filtered_parts[0] in {"home", "Users"}:
+        filtered_parts = filtered_parts[2:]  # drop /home/<user>
     tail = filtered_parts[-3:] if filtered_parts else [resolved.name or "path"]
     return Path("<external>", *tail).as_posix()
 

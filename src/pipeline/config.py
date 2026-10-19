@@ -17,6 +17,7 @@ ARTIFACT_SCHEMA_VERSION = "2.0"
 WEBSITE_EXPORT_SCHEMA_VERSION = "3.1"
 
 DEFAULT_CONFIG_PATH = "config/config.yaml"
+SECRETS_CONFIG_NAME = "secrets.yaml"
 DEFAULT_ARTIFACTS_DIR = "artifacts"
 DEFAULT_WEBSITE_EXPORT_DIR = "website_exports"
 DEFAULT_WEBSITE_SYNC_DIR = "../websmaLLMs/public/data"
@@ -101,7 +102,17 @@ def load_pipeline_config(config_path: str, default_benchmarks: Sequence[str]) ->
 
     with open(path, "r", encoding="utf-8") as handle:
         loaded = yaml.safe_load(handle) or {}
-    return deep_merge(defaults, loaded)
+    config = deep_merge(defaults, loaded)
+
+    # Secrets (e.g. huggingface.token) live in a gitignored secrets.yaml next to
+    # the config file, or in the HF_TOKEN environment variable (see src/utils/env.py).
+    secrets_path = path.parent / SECRETS_CONFIG_NAME
+    if secrets_path.exists():
+        with open(secrets_path, "r", encoding="utf-8") as handle:
+            secrets = yaml.safe_load(handle) or {}
+        if isinstance(secrets, dict):
+            config = deep_merge(config, secrets)
+    return config
 
 
 def local_benchmark_settings(config: Dict[str, Any], default_benchmarks: Sequence[str]) -> Dict[str, Any]:

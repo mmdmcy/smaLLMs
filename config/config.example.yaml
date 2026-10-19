@@ -3,7 +3,10 @@
 
 # Hugging Face Settings
 huggingface:
-  token: "YOUR_HF_TOKEN_HERE"  # Get from https://huggingface.co/settings/tokens
+  # Do not put your token here (this file is tracked). Set the HF_TOKEN
+  # environment variable, or create config/secrets.yaml (gitignored) with:
+  #   huggingface:
+  #     token: "hf_..."
   use_pro_features: true  # Set to true if you have HF Pro subscription
   inference_endpoints:
     timeout: 120  # seconds
