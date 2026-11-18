@@ -277,28 +277,77 @@ def collect_system_metadata() -> Dict[str, Any]:
         "ollama_version": _run_command([ollama, "--version"]) if ollama else "",
     }
 
-    try:
-        import psutil
-
-        memory = psutil.virtual_memory()
-        metadata.update(
-            {
-                "cpu_count_logical": psutil.cpu_count(logical=True),
-                "cpu_count_physical": psutil.cpu_count(logical=False),
-                "memory_total_mb": round(memory.total / (1024 * 1024), 2),
-            }
-        )
-    except ModuleNotFoundError:
-        metadata.update(
-            {
-                "cpu_count_logical": os.cpu_count(),
-                "cpu_count_physical": None,
-                "memory_total_mb": None,
-                "system_metadata_warning": "psutil_not_installed",
-            }
-        )
+    memory_total_mb = _memory_total_mb()
+    metadata.update(
+        {
+            "cpu_count_logical": os.cpu_count(),
+            "cpu_count_physical": _physical_cpu_count(),
+            "memory_total_mb": memory_total_mb,
+        }
+    )
+    if memory_total_mb is None:
+        metadata["system_metadata_warning"] = "memory_total_unavailable"
 
     return sanitize_system_metadata(metadata)
+
+
+def _memory_total_mb() -> Optional[float]:
+    """Total physical memory in MB from the operating system, or None."""
+    total = None
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class _MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = _MemoryStatus()
+            status.dwLength = ctypes.sizeof(_MemoryStatus)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                total = int(status.ullTotalPhys)
+        else:
+            total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, OSError, ValueError):
+        total = None
+    return round(total / (1024 * 1024), 2) if total else None
+
+
+def _physical_cpu_count() -> Optional[int]:
+    """Physical core count where the OS says it cheaply (Linux, macOS), else None."""
+    system = platform.system()
+    if system == "Linux":
+        try:
+            cores = set()
+            physical_id = core_id = None
+            with open("/proc/cpuinfo", "r", encoding="utf-8", errors="replace") as handle:
+                for line in list(handle) + [""]:
+                    key, _, value = line.partition(":")
+                    key = key.strip()
+                    if key == "physical id":
+                        physical_id = value.strip()
+                    elif key == "core id":
+                        core_id = value.strip()
+                    elif not key:
+                        if core_id is not None:
+                            cores.add((physical_id, core_id))
+                        physical_id = core_id = None
+            return len(cores) or None
+        except OSError:
+            return None
+    if system == "Darwin":
+        value = _run_command(["sysctl", "-n", "hw.physicalcpu"])
+        return int(value) if value.isdigit() else None
+    return None
 
 
 def collect_repository_metadata(repo_root: str = ".") -> Dict[str, Any]:

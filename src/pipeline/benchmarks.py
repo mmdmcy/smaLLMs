@@ -7,27 +7,26 @@ from __future__ import annotations
 import ast
 import hashlib
 import inspect
+import io
 import json
 import logging
 import math
 import os
 import re
 import time
+import zipfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
+from src.pipeline import hf_datasets
 from src.utils.env import load_repository_env
 
 
 ProgressCallback = Optional[Callable[[Dict[str, Any]], None]]
 LOGGER = logging.getLogger(__name__)
 
-# Windows without Developer Mode often cannot create the symlinks that Hugging Face
-# uses for a more space-efficient cache layout. Caching still works, so silence the
-# repeated warning and keep the benchmark UX clean by default.
-os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 load_repository_env()
 
 
@@ -292,7 +291,6 @@ def _load_rows_with_cache(
             if attempt >= max_attempts - 1 or not _is_transient_dataset_error(exc):
                 raise
             wait_seconds = attempt + 1
-            _reset_huggingface_http_session()
             LOGGER.warning(
                 "Transient dataset load error for %s: %s. Retrying in %ss.",
                 cache_key,
@@ -304,16 +302,6 @@ def _load_rows_with_cache(
         _write_cached_rows(cache_key, rows, metadata)
         LOGGER.info("Cached %s row(s) for benchmark %s in %s", len(rows), cache_key, _cache_paths(cache_key)[0])
     return rows
-
-
-def _reset_huggingface_http_session() -> None:
-    """Drop the shared HF Hub HTTP client after a transient closed-client error."""
-    try:
-        from huggingface_hub.utils._http import close_session
-
-        close_session()
-    except Exception:
-        return
 
 
 def _is_transient_dataset_error(exc: Exception) -> bool:
@@ -328,6 +316,10 @@ def _is_transient_dataset_error(exc: Exception) -> bool:
         "temporarily unavailable",
         "read timed out",
         "readtimeout",
+        "timed out",
+        "cannot connect",
+        "remote end closed",
+        "index is loading",
     )
     return any(marker in message for marker in transient_markers)
 
@@ -338,39 +330,34 @@ def _safe_load_dataset(
     split: str,
     revision: Optional[str] = None,
     data_files: Optional[Any] = None,
+    page_size: int = hf_datasets.PAGE_SIZE,
 ) -> Iterable[Dict[str, Any]]:
-    """Load a dataset in streaming mode to keep local runs lightweight."""
-    from datasets import load_dataset
-
-    kwargs: Dict[str, Any] = {
-        "split": split,
-        "streaming": True,
-        "download_mode": "reuse_cache_if_exists",
-    }
-    if revision:
-        kwargs["revision"] = revision
-    if data_files is not None:
-        kwargs["data_files"] = data_files
-        kwargs["cache_dir"] = str(_DATASET_RUNTIME.cache_dir / "hf_datasets")
-
+    """Return a lazy iterator over a split's rows from Hugging Face's dataset viewer."""
     if not _DATASET_RUNTIME.allow_remote_downloads:
         raise RuntimeError(
             f"Remote dataset downloads are disabled, so dataset '{dataset_name}' cannot be fetched right now."
         )
+    if revision or data_files is not None:
+        raise RuntimeError(
+            f"Dataset '{dataset_name}': the dataset viewer serves the main revision's configs only; "
+            "a benchmark with a revision or data files needs its own loader."
+        )
+    return hf_datasets.iter_rows(dataset_name, config_name, split, page_size)
 
-    try:
-        if config_name:
-            return load_dataset(dataset_name, config_name, **kwargs)
-        return load_dataset(dataset_name, **kwargs)
-    except Exception as exc:
-        message = str(exc)
-        if "trust_remote_code=True" not in message and "contains custom code" not in message:
-            raise
 
-    kwargs["trust_remote_code"] = True
-    if config_name:
-        return load_dataset(dataset_name, config_name, **kwargs)
-    return load_dataset(dataset_name, **kwargs)
+def _safe_load_filtered_dataset(
+    dataset_name: str,
+    config_name: Optional[str],
+    split: str,
+    where: str,
+    page_size: int = hf_datasets.PAGE_SIZE,
+) -> Iterable[Dict[str, Any]]:
+    """Return a lazy iterator over the rows matching a viewer filter, in row order."""
+    if not _DATASET_RUNTIME.allow_remote_downloads:
+        raise RuntimeError(
+            f"Remote dataset downloads are disabled, so dataset '{dataset_name}' cannot be fetched right now."
+        )
+    return hf_datasets.iter_filtered_rows(dataset_name, config_name, split, where, page_size)
 
 
 def _take_samples(dataset: Iterable[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
@@ -1010,6 +997,7 @@ class DatasetBenchmark(ABC):
             self.split,
             revision=self.dataset_revision,
             data_files=self.dataset_data_files,
+            page_size=limit,
         )
         return _take_samples(dataset, limit)
 
@@ -1283,7 +1271,7 @@ class HendrycksMathBenchmark(DatasetBenchmark):
     def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
         """Round-robin across the seven MATH configs for balanced sampling."""
         iterators: List[Iterator[Dict[str, Any]]] = [
-            iter(_safe_load_dataset(self.dataset_name, config_name, self.split))
+            iter(_safe_load_dataset(self.dataset_name, config_name, self.split, page_size=limit))
             for config_name in MATH_CONFIGS
         ]
         config_names = list(MATH_CONFIGS)
@@ -1422,12 +1410,15 @@ class GraphwalksBenchmark(DatasetBenchmark):
         self.max_prompt_chars = max_prompt_chars
 
     def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
-        dataset = _safe_load_dataset(
-            self.dataset_loader_name or self.dataset_name,
+        dataset = _safe_load_filtered_dataset(
+            self.dataset_name,
             self.config_name,
             self.split,
-            data_files=self.dataset_data_files,
+            f"\"problem_type\"='{self.problem_type}' AND \"prompt_chars\">={int(self.min_prompt_chars)} "
+            f"AND \"prompt_chars\"<={int(self.max_prompt_chars)}",
+            page_size=limit,
         )
+        # The viewer filter narrows the rows; the same predicate as before decides.
         return _take_filtered_samples(
             dataset,
             limit,
@@ -1497,11 +1488,15 @@ class MRCRBenchmark(DatasetBenchmark):
         self.max_chars = max_chars
 
     def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
-        dataset = _safe_load_dataset(
-            self.dataset_loader_name or self.dataset_name,
+        # dataset_data_files names the 8-needle parquet files the rows come from; in the
+        # viewer's one config of openai/mrcr those are exactly the rows with n_needles = 8.
+        dataset = _safe_load_filtered_dataset(
+            self.dataset_name,
             self.config_name,
             self.split,
-            data_files=self.dataset_data_files,
+            f"\"n_needles\"={int(self.n_needles)} AND \"n_chars\">={int(self.min_chars)} "
+            f"AND \"n_chars\"<{int(self.max_chars)}",
+            page_size=limit,
         )
         return _take_filtered_samples(
             dataset,
@@ -1769,6 +1764,38 @@ class SocialIQABenchmark(DatasetBenchmark):
     description = "Social commonsense reasoning with three answer choices."
     category = "reasoning"
     max_tokens = 32
+    # The dataset viewer does not serve this script-based dataset, so its rows are read from
+    # the archive its loading script (allenai/social_i_qa, social_i_qa.py) downloads, the same
+    # way the script reads it: the split's JSONL file with one label per line beside it.
+    source_archive_url = "https://storage.googleapis.com/ai2-mosaic/public/socialiqa/socialiqa-train-dev.zip"
+    source_files = {
+        "train": ("socialiqa-train-dev/train.jsonl", "socialiqa-train-dev/train-labels.lst"),
+        "validation": ("socialiqa-train-dev/dev.jsonl", "socialiqa-train-dev/dev-labels.lst"),
+    }
+
+    def _load_rows_uncached(self, limit: int) -> List[Dict[str, Any]]:
+        if not _DATASET_RUNTIME.allow_remote_downloads:
+            raise RuntimeError(
+                f"Remote dataset downloads are disabled, so dataset '{self.dataset_name}' cannot be fetched right now."
+            )
+        rows_name, labels_name = self.source_files[self.split]
+        with zipfile.ZipFile(io.BytesIO(hf_datasets.download_bytes(self.source_archive_url))) as archive:
+            labels = [label.strip() for label in archive.read(labels_name).decode("utf-8").splitlines()]
+            lines = archive.read(rows_name).decode("utf-8").splitlines()
+        rows: List[Dict[str, Any]] = []
+        for index, line in enumerate(lines[:limit]):
+            data = json.loads(line)
+            rows.append(
+                {
+                    "context": data["context"],
+                    "question": data["question"],
+                    "answerA": data["answerA"],
+                    "answerB": data["answerB"],
+                    "answerC": data["answerC"],
+                    "label": labels[index],
+                }
+            )
+        return rows
 
     def build_prompt(self, row: Dict[str, Any]) -> str:
         return (

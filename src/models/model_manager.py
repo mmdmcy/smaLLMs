@@ -24,15 +24,12 @@ from src.utils.env import huggingface_token, load_repository_env
 
 load_repository_env()
 
-try:
-    import aiohttp
-except ModuleNotFoundError:
-    aiohttp = None
+from src.utils import http_client
+from src.utils.http_client import AsyncHTTPClient, HTTPClientError, HTTPConnectionError
 
-try:
-    from huggingface_hub import InferenceClient
-except ModuleNotFoundError:
-    InferenceClient = None
+# Hugging Face Inference Providers' OpenAI-compatible router: the endpoint
+# huggingface_hub's InferenceClient(provider="auto") sends chat completions to.
+HF_ROUTER_CHAT_URL = "https://router.huggingface.co/v1/chat/completions"
 
 @dataclass
 class ModelInfo:
@@ -320,18 +317,9 @@ class HuggingFaceModel(BaseModel):
     
     def __init__(self, model_name: str, config: Dict, metadata: Optional[Dict[str, Any]] = None):
         super().__init__(model_name, config, metadata=metadata)
-        if InferenceClient is None:
-            raise RuntimeError(
-                "huggingface_hub is not installed. Install the full requirements or avoid Hugging Face models."
-            )
         hf_config = config.get('huggingface', {})
         self.token = huggingface_token(hf_config.get('token'))
-        
-        # Use the modern InferenceClient for Inference Providers
-        self.client = InferenceClient(
-            api_key=self.token,
-            provider="auto"  # Let HF choose the best provider automatically
-        )
+        self.chat_url = HF_ROUTER_CHAT_URL
         self.max_retries = hf_config.get('inference_endpoints', {}).get('max_retries', 3)
 
     async def generate_with_metadata(
@@ -345,23 +333,36 @@ class HuggingFaceModel(BaseModel):
 
         for attempt in range(self.max_retries):
             try:
-                completion = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=generation_config.max_tokens,
-                    temperature=generation_config.temperature,
-                    top_p=generation_config.top_p,
-                    stop=generation_config.stop_sequences or [],
+                headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+                response = await asyncio.to_thread(
+                    http_client.request,
+                    "POST",
+                    self.chat_url,
+                    {
+                        "model": self.model_name,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": generation_config.max_tokens,
+                        "temperature": generation_config.temperature,
+                        "top_p": generation_config.top_p,
+                        "stop": generation_config.stop_sequences or [],
+                    },
+                    headers,
+                    None,
+                    True,
                 )
+                if response.status >= 400:
+                    raise HTTPClientError(f"{response.status} from {self.chat_url}: {response.text()[:500]}")
+                completion = response.json()
+                choices = completion.get("choices") or []
 
-                if completion.choices and len(completion.choices) > 0:
-                    content = completion.choices[0].message.content or ""
+                if choices:
+                    content = (choices[0].get("message") or {}).get("content") or ""
                     ended = datetime.now(timezone.utc).isoformat()
                     latency_sec = time.time() - start_time
-                    usage = getattr(completion, "usage", None)
-                    prompt_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
-                    completion_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
-                    total_tokens = getattr(usage, "total_tokens", prompt_tokens + completion_tokens) if usage else 0
+                    usage = completion.get("usage") or None
+                    prompt_tokens = usage.get("prompt_tokens", 0) if usage else 0
+                    completion_tokens = usage.get("completion_tokens", 0) if usage else 0
+                    total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens) if usage else 0
 
                     return GenerationResult(
                         text=content.strip(),
@@ -375,7 +376,7 @@ class HuggingFaceModel(BaseModel):
                         completion_tokens=completion_tokens,
                         total_tokens=total_tokens,
                         tokens_per_second=(completion_tokens / latency_sec) if latency_sec > 0 else 0.0,
-                        raw=completion.model_dump() if hasattr(completion, "model_dump") else None,
+                        raw=completion,
                     )
 
                 self.logger.warning(f"Model {self.model_name} returned no choices in attempt {attempt + 1}")
@@ -514,11 +515,9 @@ class OllamaModel(BaseModel):
         return _detect_vision_support_from_name(self.model_name)
     
     async def _get_session(self):
-        """Get or create aiohttp session."""
-        if aiohttp is None:
-            raise RuntimeError("aiohttp is not installed. Install local requirements for direct HTTP model access.")
+        """Get or create the HTTP client."""
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
+            self.session = AsyncHTTPClient()
         return self.session
     
     async def unload_model(self):
@@ -529,8 +528,8 @@ class OllamaModel(BaseModel):
 
             if transport == "http":
                 session = await self._get_session()
-                async with session.post(f"{self.base_url}/api/generate", json=payload) as response:
-                    response.raise_for_status()
+                response = await session.post(f"{self.base_url}/api/generate", json=payload)
+                response.raise_for_status()
             elif transport == "windows_curl" and self.windows_curl:
                 await asyncio.to_thread(
                     subprocess.run,
@@ -565,7 +564,7 @@ class OllamaModel(BaseModel):
             self.logger.warning(f"Could not unload model {self.model_name}: {e}")
     
     async def close(self):
-        """Close the aiohttp session and unload model."""
+        """Close the HTTP client and unload model."""
         # First unload the model from Ollama memory
         await self.unload_model()
         
@@ -685,15 +684,14 @@ class OllamaModel(BaseModel):
         if self.transport:
             return self.transport
 
-        if aiohttp is not None:
-            try:
-                session = await self._get_session()
-                async with session.get(f"{self.base_url}/api/tags", timeout=aiohttp.ClientTimeout(total=3)) as response:
-                    if response.status == 200:
-                        self.transport = "http"
-                        return self.transport
-            except Exception:
-                pass
+        try:
+            session = await self._get_session()
+            response = await session.get(f"{self.base_url}/api/tags", timeout=3)
+            if response.status == 200:
+                self.transport = "http"
+                return self.transport
+        except Exception:
+            pass
 
         if self.windows_curl:
             try:
@@ -810,21 +808,18 @@ class OllamaModel(BaseModel):
         current_timeout: int,
     ) -> Dict[str, Any]:
         """Call an Ollama HTTP endpoint through the local Python process."""
-        if aiohttp is None:
-            return {"response": "", "error": "aiohttp_not_installed"}
         session = await self._get_session()
-        timeout = aiohttp.ClientTimeout(total=current_timeout)
-        async with session.post(f"{self.base_url}{endpoint}", json=payload, timeout=timeout) as response:
-            if response.status == 404:
-                self.logger.error(f"Model {self.model_name} not found in Ollama. Is it pulled?")
-                return {"response": "", "error": "model_not_found"}
-            if response.status == 500:
-                error_text = await response.text()
-                self.logger.error(f"Ollama server error: {error_text}")
-                return {"response": "", "error": error_text}
+        response = await session.post(f"{self.base_url}{endpoint}", json=payload, timeout=current_timeout)
+        if response.status == 404:
+            self.logger.error(f"Model {self.model_name} not found in Ollama. Is it pulled?")
+            return {"response": "", "error": "model_not_found"}
+        if response.status == 500:
+            error_text = response.text()
+            self.logger.error(f"Ollama server error: {error_text}")
+            return {"response": "", "error": error_text}
 
-            response.raise_for_status()
-            return await response.json()
+        response.raise_for_status()
+        return response.json()
 
     async def _request_generate_http(self, payload: Dict[str, Any], current_timeout: int) -> Dict[str, Any]:
         """Call the Ollama generate API through the local Python process."""
@@ -1016,7 +1011,7 @@ class OllamaModel(BaseModel):
                     self.logger.error(f"Ollama generation timeout for model {self.model_name} after {max_retries + 1} attempts with final timeout of {current_timeout}s")
                     return {"response": "", "error": "timeout"}
             except Exception as e:
-                if aiohttp is not None and isinstance(e, aiohttp.ClientError):
+                if isinstance(e, HTTPClientError):
                     self.logger.error(f"Ollama connection error: {str(e)}")
                     self.transport = None
                     return {"response": "", "error": str(e)}
@@ -1167,7 +1162,7 @@ class OllamaModel(BaseModel):
         )
     
     async def close(self):
-        """Close the aiohttp session and unload the current model."""
+        """Close the HTTP client and unload the current model."""
         await self.unload_model()
         if self.session:
             await self.session.close()
@@ -1188,11 +1183,9 @@ class LMStudioModel(BaseModel):
         return any(keyword in self.model_name.lower() for keyword in vision_keywords)
     
     async def _get_session(self):
-        """Get or create aiohttp session."""
-        if aiohttp is None:
-            raise RuntimeError("aiohttp is not installed. LM Studio support needs local requirements.")
+        """Get or create the HTTP client."""
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
+            self.session = AsyncHTTPClient()
         return self.session
     
     async def unload_model(self):
@@ -1206,7 +1199,7 @@ class LMStudioModel(BaseModel):
             self.logger.warning(f"Could not unload LM Studio model {self.model_name}: {e}")
     
     async def close(self):
-        """Close the aiohttp session and unload model."""
+        """Close the HTTP client and unload model."""
         # First unload the model 
         await self.unload_model()
         
@@ -1268,44 +1261,31 @@ class LMStudioModel(BaseModel):
         }
         
         try:
-            async with session.post(f"{self.base_url}/v1/chat/completions", json=payload) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    if result.get("choices") and len(result["choices"]) > 0:
-                        content = result["choices"][0]["message"]["content"]
-                        usage = result.get("usage") or {}
-                        latency_sec = time.time() - start_time
-                        ended = datetime.now(timezone.utc).isoformat()
-                        completion_tokens = int(usage.get("completion_tokens") or 0)
-                        return GenerationResult(
-                            text=content.strip() if content else "",
-                            prompt=prompt,
-                            started_at=started,
-                            ended_at=ended,
-                            latency_sec=latency_sec,
-                            total_duration_sec=latency_sec,
-                            provider="lm_studio",
-                            prompt_tokens=int(usage.get("prompt_tokens") or 0),
-                            completion_tokens=completion_tokens,
-                            total_tokens=int(usage.get("total_tokens") or 0),
-                            tokens_per_second=(completion_tokens / latency_sec) if latency_sec > 0 else 0.0,
-                            raw=result,
-                        )
-                    else:
-                        self.logger.warning(f"LM Studio returned no choices for {self.model_name}")
-                        return GenerationResult(
-                            text="",
-                            prompt=prompt,
-                            started_at=started,
-                            ended_at=datetime.now(timezone.utc).isoformat(),
-                            latency_sec=time.time() - start_time,
-                            total_duration_sec=time.time() - start_time,
-                            provider="lm_studio",
-                            raw=result,
-                        )
+            response = await session.post(f"{self.base_url}/v1/chat/completions", json=payload)
+            if response.status == 200:
+                result = response.json()
+                if result.get("choices") and len(result["choices"]) > 0:
+                    content = result["choices"][0]["message"]["content"]
+                    usage = result.get("usage") or {}
+                    latency_sec = time.time() - start_time
+                    ended = datetime.now(timezone.utc).isoformat()
+                    completion_tokens = int(usage.get("completion_tokens") or 0)
+                    return GenerationResult(
+                        text=content.strip() if content else "",
+                        prompt=prompt,
+                        started_at=started,
+                        ended_at=ended,
+                        latency_sec=latency_sec,
+                        total_duration_sec=latency_sec,
+                        provider="lm_studio",
+                        prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                        completion_tokens=completion_tokens,
+                        total_tokens=int(usage.get("total_tokens") or 0),
+                        tokens_per_second=(completion_tokens / latency_sec) if latency_sec > 0 else 0.0,
+                        raw=result,
+                    )
                 else:
-                    error_text = await response.text()
-                    self.logger.error(f"LM Studio API error {response.status}: {error_text}")
+                    self.logger.warning(f"LM Studio returned no choices for {self.model_name}")
                     return GenerationResult(
                         text="",
                         prompt=prompt,
@@ -1314,9 +1294,22 @@ class LMStudioModel(BaseModel):
                         latency_sec=time.time() - start_time,
                         total_duration_sec=time.time() - start_time,
                         provider="lm_studio",
-                        raw={"error": error_text, "status": response.status},
+                        raw=result,
                     )
-        
+            else:
+                error_text = response.text()
+                self.logger.error(f"LM Studio API error {response.status}: {error_text}")
+                return GenerationResult(
+                    text="",
+                    prompt=prompt,
+                    started_at=started,
+                    ended_at=datetime.now(timezone.utc).isoformat(),
+                    latency_sec=time.time() - start_time,
+                    total_duration_sec=time.time() - start_time,
+                    provider="lm_studio",
+                    raw={"error": error_text, "status": response.status},
+                )
+    
         except Exception as e:
             self.logger.error(f"LM Studio generation error: {str(e)}")
             return GenerationResult(
@@ -1423,7 +1416,7 @@ class LMStudioModel(BaseModel):
         )
     
     async def close(self):
-        """Close the aiohttp session and signal model unload."""
+        """Close the HTTP client and signal model unload."""
         await self.unload_model()
         if self.session:
             await self.session.close()
@@ -1496,22 +1489,20 @@ class ModelManager:
                 )
             return parsed
 
-        if aiohttp is not None:
-            try:
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
-                    async with session.get(f"{base_url}/api/tags") as response:
-                        if response.status == 200:
-                            models = parse_api_models(await response.json())
-                            self.logger.info(f"Found {len(models)} Ollama models via API")
-                            if models:
-                                return models
-            except asyncio.TimeoutError:
-                self.logger.info("Ollama API timed out during discovery, falling back to CLI")
-            except Exception as e:
-                if isinstance(e, aiohttp.ClientConnectorError):
-                    self.logger.info("Ollama API not reachable during discovery, falling back to CLI")
-                else:
-                    self.logger.warning(f"Could not discover Ollama models via API: {e}")
+        try:
+            response = await AsyncHTTPClient(timeout=5).get(f"{base_url}/api/tags")
+            if response.status == 200:
+                models = parse_api_models(response.json())
+                self.logger.info(f"Found {len(models)} Ollama models via API")
+                if models:
+                    return models
+        except asyncio.TimeoutError:
+            self.logger.info("Ollama API timed out during discovery, falling back to CLI")
+        except Exception as e:
+            if isinstance(e, HTTPConnectionError):
+                self.logger.info("Ollama API not reachable during discovery, falling back to CLI")
+            else:
+                self.logger.warning(f"Could not discover Ollama models via API: {e}")
 
         if windows_curl:
             try:
@@ -1562,47 +1553,42 @@ class ModelManager:
         base_url = self.config.get('lm_studio', {}).get('base_url', 'http://localhost:1234')
         models = []
         
-        if aiohttp is None:
-            self.logger.info("aiohttp not installed - skipping LM Studio discovery")
-            return models
-
         try:
             # Quick connection test first
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
-                async with session.get(f"{base_url}/v1/models") as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        for model in data.get('data', []):
-                            name = model.get('id', 'unknown')
-                            
-                            # Detect vision support
-                            supports_vision = any(keyword in name.lower() 
-                                                for keyword in ['llava', 'vision', 'vl', 'multimodal', 'qwen2-vl', 'minicpm-v'])
-                            
-                            models.append({
-                                'name': name,
-                                'provider': 'lm_studio',
-                                'source': 'lm_studio_api',
-                                'modified_at': str(model.get('created', '')),
-                                'size_gb': 0,  # LM Studio doesn't provide size info easily
-                                'supports_vision': supports_vision,
-                                'model_type': 'vision' if supports_vision else 'text',
-                                'cost_per_token': 0.0,
-                                'created': model.get('created', 0),
-                                'available': True,
-                                'family': model.get('owned_by', 'unknown'),
-                                'quantization': model.get('quantization', 'unknown'),
-                                'parameters': model.get('parameters', 'unknown'),
-                            })
-                        
-                        self.logger.info(f"Found {len(models)} LM Studio models")
-                    else:
-                        self.logger.warning(f"LM Studio API returned status {response.status}")
-                        
+            response = await AsyncHTTPClient(timeout=5).get(f"{base_url}/v1/models")
+            if response.status == 200:
+                data = response.json()
+                for model in data.get('data', []):
+                    name = model.get('id', 'unknown')
+                    
+                    # Detect vision support
+                    supports_vision = any(keyword in name.lower() 
+                                        for keyword in ['llava', 'vision', 'vl', 'multimodal', 'qwen2-vl', 'minicpm-v'])
+                    
+                    models.append({
+                        'name': name,
+                        'provider': 'lm_studio',
+                        'source': 'lm_studio_api',
+                        'modified_at': str(model.get('created', '')),
+                        'size_gb': 0,  # LM Studio doesn't provide size info easily
+                        'supports_vision': supports_vision,
+                        'model_type': 'vision' if supports_vision else 'text',
+                        'cost_per_token': 0.0,
+                        'created': model.get('created', 0),
+                        'available': True,
+                        'family': model.get('owned_by', 'unknown'),
+                        'quantization': model.get('quantization', 'unknown'),
+                        'parameters': model.get('parameters', 'unknown'),
+                    })
+                
+                self.logger.info(f"Found {len(models)} LM Studio models")
+            else:
+                self.logger.warning(f"LM Studio API returned status {response.status}")
+                
         except asyncio.TimeoutError:
             self.logger.info("LM Studio server not responding (timeout) - skipping LM Studio discovery")
         except Exception as e:
-            if isinstance(e, aiohttp.ClientConnectorError):
+            if isinstance(e, HTTPConnectionError):
                 self.logger.info("LM Studio server not running - skipping LM Studio discovery")
             else:
                 self.logger.warning(f"Could not discover LM Studio models: {e}")
