@@ -10,7 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Sequence
 
-import yaml
+from src.utils.yaml_subset import load_file as load_yaml_file
 
 
 ARTIFACT_SCHEMA_VERSION = "2.0"
@@ -100,16 +100,14 @@ def load_pipeline_config(config_path: str, default_benchmarks: Sequence[str]) ->
     if not path.exists():
         return defaults
 
-    with open(path, "r", encoding="utf-8") as handle:
-        loaded = yaml.safe_load(handle) or {}
+    loaded = load_yaml_file(path) or {}
     config = deep_merge(defaults, loaded)
 
     # Secrets (e.g. huggingface.token) live in a gitignored secrets.yaml next to
     # the config file, or in the HF_TOKEN environment variable (see src/utils/env.py).
     secrets_path = path.parent / SECRETS_CONFIG_NAME
     if secrets_path.exists():
-        with open(secrets_path, "r", encoding="utf-8") as handle:
-            secrets = yaml.safe_load(handle) or {}
+        secrets = load_yaml_file(secrets_path) or {}
         if isinstance(secrets, dict):
             config = deep_merge(config, secrets)
     return config

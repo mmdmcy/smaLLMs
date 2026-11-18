@@ -21,7 +21,7 @@ smaLLMs is built for:
 
 Important distinction:
 - model inference is local-first through Ollama or LM Studio
-- benchmark datasets download automatically through the Hugging Face `datasets` ecosystem on first use
+- benchmark datasets download automatically from Hugging Face's public dataset viewer API on first use
 - after that, smaLLMs reuses the local cache automatically
 - benchmark rows are cached outside the repo in a per-user cache directory, so the git repo itself stays small
 - generated benchmark artifacts and website export bundles are local outputs and stay gitignored by default
@@ -109,8 +109,7 @@ python3 start.py
 ```
 
 The launcher does the user-friendly path automatically:
-- creates `.venv` if you are not already in a virtual environment
-- installs the standard local runtime from `requirements.txt`
+- creates `.venv` if you are not already in a virtual environment (nothing is installed into it: smaLLMs runs on Python's standard library alone)
 - checks Ollama and LM Studio status
 - tells you whether existing Ollama models were already found
 - opens the arrow-key terminal UI
@@ -153,8 +152,8 @@ The default interface is terminal-native:
 
 ### Dependency files
 
-- `requirements.txt` is the standard local install for normal users.
-- `requirements-dev.txt` is only for development work on the repo.
+- smaLLMs has no third-party runtime dependencies: Python 3.10+ and its standard library are enough. `requirements.txt` only says so.
+- `requirements-dev.txt` holds optional extras for the code under `legacy/` and analysis helpers; the maintained CLI does not import them.
 
 ## Testing
 
@@ -400,10 +399,9 @@ Runnable suites currently include:
 
 ## Current limitations
 
-- Some dependencies are required even for local discovery, including `aiohttp`.
-- Benchmark datasets come from Hugging Face `datasets`/HF Hub on first use, so the first run of an uncached benchmark still needs network access.
+- Benchmark datasets come from Hugging Face's dataset viewer API on first use (Social IQa from the archive its dataset script names), so the first run of an uncached benchmark still needs network access.
 - A fully offline run is possible only after the needed benchmark rows have already been cached locally.
-- The standard local install is intentionally small; use `requirements-dev.txt` only if you need the broader development environment.
+- Config files are read by a small built-in YAML reader that accepts the subset smaLLMs' own config files use (mappings, lists, quoted and plain scalars, comments, one-line `[...]`/`{...}`); anything else, such as anchors or block scalars, stops with the file and line.
 - Results are only as comparable as the local runtime settings and hardware conditions you keep consistent.
 
 ## Legacy code

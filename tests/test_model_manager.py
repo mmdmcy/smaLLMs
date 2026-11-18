@@ -66,7 +66,7 @@ class OllamaPayloadTests(unittest.TestCase):
         model.session = ClosedSession()
         replacement = OpenSession()
 
-        with mock.patch("src.models.model_manager.aiohttp.ClientSession", return_value=replacement):
+        with mock.patch("src.models.model_manager.AsyncHTTPClient", return_value=replacement):
             session = asyncio.run(model._get_session())
 
         self.assertIs(session, replacement)

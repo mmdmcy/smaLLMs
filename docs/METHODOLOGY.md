@@ -18,8 +18,11 @@ runs.
 
 ## Data Access
 
-Benchmark datasets are loaded through the Hugging Face `datasets` ecosystem on
-first use. Rows are cached outside the git repository in a per-user cache
+Benchmark datasets are loaded from Hugging Face's dataset viewer API
+(`datasets-server.huggingface.co`, in pages of at most 100 rows) on first use,
+with the same rows in the same order the `datasets` library streamed. Social IQa,
+which the viewer does not serve, is read from the archive its dataset script
+downloads. Rows are cached outside the git repository in a per-user cache
 directory. After the cache is warm, runs can be executed with `--offline`, which
 fails before model execution if any selected benchmark lacks enough cached rows.
 
