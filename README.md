@@ -157,13 +157,13 @@ The default interface is terminal-native:
 
 ## Testing
 
-Use the root test runner as the canonical local and CI entrypoint:
+Use the root test runner as the one way to run the tests:
 
 ```bash
 python test_everything.py
 ```
 
-It discovers every test under `tests/` and is the same path used by GitHub Actions and the PortUI test action.
+It discovers every test under `tests/` and is the same path the PortUI test action uses.
 
 ## Non-interactive CLI
 
